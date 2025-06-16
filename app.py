@@ -99,29 +99,81 @@ def query_stream(req: QueryRequest):
 
 @router_v1.post("/upload",
     response_model=UploadResponse,
-    summary="Upload a PDF document",
-    description="Ingests a PDF, splits into chunks, and stores embeddings in Supabase",
+    summary="Upload a PDF document with compliance metadata",
+    description="Ingests a PDF, splits into chunks, stores embeddings in Supabase with compliance domain tracking",
     tags=["Ingestion"],
 )
-def upload_pdf(file: UploadFile = File(...)):
-    # validate file type
+def upload_pdf(
+    file: UploadFile = File(...),
+    compliance_domain: Optional[str] = Form(None, description="Compliance domain (e.g., 'GDPR', 'ISO_27001', 'SOX')"),
+    document_version: Optional[str] = Form(None, description="Document version (e.g., 'v1.0', '2024-Q1')"),
+    uploaded_by: Optional[str] = Form(None, description="User ID who uploaded the document")
+):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    # read & save locally
-    contents = file.file.read()   # sync read
-    os.makedirs(settings.pdf_dir, exist_ok=True)
-    path = os.path.join(settings.pdf_dir, file.filename)
-    with open(path, "wb") as f:
-        f.write(contents)
+    if compliance_domain:
+        allowed_domains = ["GDPR", "ISO_27001", "SOX", "HIPAA", "PCI_DSS", "FDA_21CFR", "ISO_9001"]
+        if compliance_domain not in allowed_domains:
+            logging.warning(f"Unknown compliance domain: {compliance_domain}")
 
-    # ingest
-    count = ingest_pdf_sync(path)
-    
-    return UploadResponse(
-        message="PDF ingested successfully",
-        inserted_count=count
-    )
+    if uploaded_by:
+        try:
+            uuid.UUID(uploaded_by)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="uploaded_by must be a valid UUID")
+        
+    try:
+        contents = file.file.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="Empty file uploaded")
+        
+        os.makedirs(settings.pdf_dir, exist_ok=True)
+        safe_filename = os.path.basename(file.filename)
+        if not safe_filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        
+        file_path = os.path.join(settings.pdf_dir, safe_filename)
+        
+        counter = 1
+        original_path = file_path
+        while os.path.exists(file_path):
+            name, ext = os.path.splitext(original_path)
+            file_path = f"{name}_{counter}{ext}"
+            counter += 1
+        
+        with open(file_path, "wb") as f:
+            f.write(contents)
+        
+        logging.info(f"Saved file to {file_path} (size: {len(contents)} bytes)")
+        
+        chunk_count, ingestion_id = ingest_pdf_sync(
+            file_path=file_path,
+            compliance_domain=compliance_domain,
+            document_version=document_version,
+            uploaded_by=uploaded_by
+        )
+        
+        return UploadResponse(
+            message=f"PDF '{safe_filename}' ingested successfully",
+            inserted_count=chunk_count,
+            ingestion_id=ingestion_id,
+            compliance_domain=compliance_domain,
+            document_version=document_version
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error during upload: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {str(e)}"
+        )
+    finally:
+        # Clean up file handle
+        if hasattr(file.file, 'close'):
+            file.file.close()
 
 app.include_router(router_v1)
 
