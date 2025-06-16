@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pydantic
+langchain
+langchain-community
+langchain-openai
+supabase
+openai
+pypdf
+sqlmodel
+python-multipart
+greenlet
+pgvector
+postgrest
