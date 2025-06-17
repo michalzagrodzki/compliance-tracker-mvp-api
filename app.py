@@ -113,7 +113,7 @@ def upload_pdf(
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     if compliance_domain:
-        allowed_domains = ["GDPR", "ISO_27001", "SOX", "HIPAA", "PCI_DSS", "FDA_21CFR", "ISO_9001"]
+        allowed_domains = ["ISO_27001"]
         if compliance_domain not in allowed_domains:
             logging.warning(f"Unknown compliance domain: {compliance_domain}")
 
