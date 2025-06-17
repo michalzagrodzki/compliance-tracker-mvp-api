@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import uuid
 from fastapi import FastAPI, HTTPException, APIRouter, File, UploadFile
-from services.chat_history import get_chat_history
+from services.chat_history import get_audit_session_history, get_chat_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.db_check import check_database_connection
 from services.document import (
@@ -161,12 +161,81 @@ def query_qa(req: QueryRequest) -> QueryResponse:
 @router_v1.get("/history/{conversation_id}",
     response_model=List[ChatHistoryItem],
     summary="Get chat history for a conversation",
-    description="Returns an array of { question, answer } for the given conversation_id",
+    description="Returns chat history with optional filtering by audit session, domain, or user",
     tags=["History"],
 )
-def read_history(conversation_id: str):
-    return get_chat_history(conversation_id)
+def read_history(
+    conversation_id: str,
+    audit_session_id: Optional[str] = Query(None, description="Filter by audit session UUID"),
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain code"),
+    user_id: Optional[str] = Query(None, description="Filter by user UUID"),
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Limit number of records")
+):
+    return get_chat_history(
+        conversation_id=conversation_id,
+        audit_session_id=audit_session_id,
+        compliance_domain=compliance_domain,
+        user_id=user_id,
+        limit=limit
+    )
 
+@router_v1.get("/audit-sessions/{audit_session_id}/history",
+    response_model=List[ChatHistoryItem],
+    summary="Get all chat history for an audit session",
+    description="Returns all chat interactions within a specific audit session across conversations",
+    tags=["History", "Audit"],
+)
+def read_audit_session_history(
+    audit_session_id: str,
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain")
+):
+    return get_audit_session_history(
+        audit_session_id=audit_session_id,
+        compliance_domain=compliance_domain
+    )
+
+@router_v1.get("/compliance-domains/{domain_code}/history",
+    response_model=List[ChatHistoryItem],
+    summary="Get chat history by compliance domain",
+    description="Returns all chat history for a specific compliance domain (e.g., GDPR, ISO27001)",
+    tags=["History", "Compliance"],
+)
+def read_domain_history(
+    domain_code: str,
+    audit_session_id: Optional[str] = Query(None, description="Filter by audit session"),
+    user_id: Optional[str] = Query(None, description="Filter by user"),
+    limit: Optional[int] = Query(100, ge=1, le=1000, description="Limit number of records"),
+    skip: Optional[int] = Query(0, ge=0, description="Skip number of records for pagination")
+):
+    return get_domain_history(
+        domain_code=domain_code,
+        audit_session_id=audit_session_id,
+        user_id=user_id,
+        limit=limit,
+        skip=skip
+    )
+
+@router_v1.get("/users/{user_id}/history",
+    response_model=List[ChatHistoryItem],
+    summary="Get chat history by user",
+    description="Returns all chat history for a specific user with optional domain filtering",
+    tags=["History", "Users"],
+)
+def read_user_history(
+    user_id: str,
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
+    audit_session_id: Optional[str] = Query(None, description="Filter by audit session"),
+    limit: Optional[int] = Query(100, ge=1, le=1000, description="Limit number of records"),
+    skip: Optional[int] = Query(0, ge=0, description="Skip number of records for pagination")
+):
+    return get_user_history(
+        user_id=user_id,
+        compliance_domain=compliance_domain,
+        audit_session_id=audit_session_id,
+        limit=limit,
+        skip=skip
+    )
+    
 @router_v1.post("/query-stream",
     response_model=None,
     summary="Streamed Q&A with history",

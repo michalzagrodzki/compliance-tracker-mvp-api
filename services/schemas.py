@@ -29,10 +29,50 @@ class QueryResponse(BaseModel):
     compliance_domain_filter: Optional[str] = Field(None, description="Applied compliance domain filter")
 
 class ChatHistoryItem(BaseModel):
-    id: int
+    """Enhanced chat history item matching the new table schema"""
+    id: str
     conversation_id: str
     question: str
     answer: str
+    created_at: datetime
+    
+    # Audit and compliance tracking
+    audit_session_id: Optional[str] = None
+    compliance_domain: Optional[str] = None
+    source_document_ids: List[str] = Field(default_factory=list)
+    match_threshold: Optional[float] = None
+    match_count: Optional[int] = None
+    user_id: Optional[str] = None
+    
+    # Query performance metrics
+    response_time_ms: Optional[int] = None
+    total_tokens_used: Optional[int] = None
+
+class ChatHistoryFilters(BaseModel):
+    """Query parameters for filtering chat history"""
+    audit_session_id: Optional[str] = Field(None, description="Filter by audit session UUID")
+    compliance_domain: Optional[str] = Field(None, description="Filter by compliance domain code")
+    user_id: Optional[str] = Field(None, description="Filter by user UUID")
+    limit: Optional[int] = Field(None, ge=1, le=1000, description="Limit number of records returned")
+
+class AuditSessionSummary(BaseModel):
+    """Summary statistics for an audit session"""
+    audit_session_id: str
+    total_queries: int
+    compliance_domains: List[str]
+    total_response_time_ms: Optional[int] = None
+    total_tokens_used: Optional[int] = None
+    unique_conversations: int
+    created_at_range: Dict[str, datetime]  # {"start": datetime, "end": datetime}
+
+class ComplianceDomainStats(BaseModel):
+    """Statistics for a specific compliance domain"""
+    domain_code: str
+    total_queries: int
+    avg_response_time_ms: Optional[float] = None
+    avg_tokens_per_query: Optional[float] = None
+    unique_users: int
+    most_recent_query: Optional[datetime] = None
 
 class IngestionStatus(BaseModel):
     id: str
