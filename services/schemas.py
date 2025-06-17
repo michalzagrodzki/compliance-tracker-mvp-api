@@ -104,3 +104,23 @@ class AuditSessionSearchRequest(BaseModel):
     is_active: Optional[bool] = Field(None, description="Filter by active status")
     skip: int = Field(0, ge=0, description="Number of records to skip")
     limit: int = Field(10, ge=1, le=100, description="Maximum number of records to return")
+
+class DocumentAccessLogItem(BaseModel):
+    id: UUID
+    user_id: UUID | None = None
+    document_id: UUID | None = None
+    access_type: str 
+    audit_session_id: UUID | None = None
+    accessed_at: datetime
+    query_text: str | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None
+
+class CreateDocumentAccessLog(BaseModel):
+    user_id: UUID | None = None
+    document_id: UUID | None = None
+    access_type: str = Field(..., regex="^(view|search|download|reference)$")
+    audit_session_id: UUID | None = None
+    query_text: str | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None

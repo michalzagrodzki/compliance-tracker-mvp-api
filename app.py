@@ -44,6 +44,14 @@ from services.audit_sessions import (
     create_audit_session,
     update_audit_session
 )
+from services.document_access_log import (
+    list_document_access_logs,
+    get_document_access_log_by_id,
+    list_document_access_logs_by_user,
+    list_document_access_logs_by_document,
+    list_document_access_logs_by_audit_session,
+    list_document_access_logs_filtered
+)
 
 logging.basicConfig(
     level=logging.DEBUG,  # or DEBUG
@@ -486,6 +494,88 @@ def get_audit_session_statistics_endpoint(
         end_date=end_date
     )
 
+@router_v1.get("/document-access-logs",
+    summary="List all document access logs with pagination",
+    description="Fetches paginated rows from the Supabase 'document_access_log' table.",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit"],
+)
+def get_all_document_access_logs(
+    skip: int = Query(0, ge=0), 
+    limit: int = Query(10, ge=1, le=100)
+) -> Any:
+    return list_document_access_logs(skip=skip, limit=limit)
+
+@router_v1.get("/document-access-logs/{log_id}",
+    summary="Get document access log by ID",
+    description="Fetches a specific document access log entry by its ID.",
+    response_model=Dict[str, Any],
+    tags=["Audit"],
+)
+def get_document_access_log(log_id: str) -> Any:
+    return get_document_access_log_by_id(log_id)
+
+@router_v1.get("/document-access-logs/user/{user_id}",
+    summary="List document access logs by user ID",
+    description="Fetches paginated document access logs for a specific user.",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit"],
+)
+def get_document_access_logs_by_user(
+    user_id: str,
+    skip: int = Query(0, ge=0), 
+    limit: int = Query(10, ge=1, le=100)
+) -> Any:
+    return list_document_access_logs_by_user(user_id, skip=skip, limit=limit)
+
+@router_v1.get("/document-access-logs/document/{document_id}",
+    summary="List document access logs by document ID",
+    description="Fetches paginated document access logs for a specific document.",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit"],
+)
+def get_document_access_logs_by_document(
+    document_id: str,
+    skip: int = Query(0, ge=0), 
+    limit: int = Query(10, ge=1, le=100)
+) -> Any:
+    return list_document_access_logs_by_document(document_id, skip=skip, limit=limit)
+
+@router_v1.get("/document-access-logs/audit-session/{audit_session_id}",
+    summary="List document access logs by audit session ID",
+    description="Fetches paginated document access logs for a specific audit session.",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit"],
+)
+def get_document_access_logs_by_audit_session(
+    audit_session_id: str,
+    skip: int = Query(0, ge=0), 
+    limit: int = Query(10, ge=1, le=100)
+) -> Any:
+    return list_document_access_logs_by_audit_session(audit_session_id, skip=skip, limit=limit)
+
+@router_v1.get("/document-access-logs/filter",
+    summary="List document access logs with multiple filters",
+    description="Fetches paginated document access logs filtered by user_id, document_id, access_type, and/or audit_session_id.",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit"],
+)
+def get_filtered_document_access_logs(
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    document_id: Optional[str] = Query(None, description="Filter by document ID"),
+    access_type: Optional[str] = Query(None, description="Filter by access type (view, search, download, reference)"),
+    audit_session_id: Optional[str] = Query(None, description="Filter by audit session ID"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100)
+) -> Any:
+    return list_document_access_logs_filtered(
+        user_id=user_id,
+        document_id=document_id,
+        access_type=access_type,
+        audit_session_id=audit_session_id,
+        skip=skip,
+        limit=limit
+    )
 
 app.include_router(router_v1)
 

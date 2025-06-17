@@ -42,6 +42,10 @@ tags_metadata = [
     },
     {
         "name": "Ingestion",
-        "description": "PDF ingestion and embedding endpoints.",
+        "description": "PDF ingestion and embedding endpoints.",        
+    },
+    {
+        "name": "Audit",
+        "description": "Document access logging and audit trail operations.",
     },
 ]
