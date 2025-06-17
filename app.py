@@ -1,4 +1,6 @@
+import datetime
 import os
+from pathlib import Path
 import uuid
 from fastapi import FastAPI, HTTPException, APIRouter, File, UploadFile
 from services.chat_history import get_chat_history
@@ -11,10 +13,20 @@ from services.document import (
     get_documents_by_version,
     get_documents_by_domain_and_version
 )
+from services.schemas import (
+    ComplianceDomain,
+    QueryRequest, 
+    QueryResponse, 
+    ChatHistoryItem, 
+    UploadResponse,
+    AuditSessionCreate, 
+    AuditSessionUpdate, 
+    AuditSessionResponse,
+    AuditSessionSearchRequest
+)
 from services.history import get_history
 from services.ingestion import ingest_pdf_sync
 from services.qa import answer_question
-from services.schemas import QueryRequest, QueryResponse, ChatHistoryItem, UploadResponse
 from typing import Any, List, Dict, Optional
 import logging
 from fastapi import Query
@@ -22,6 +34,16 @@ from config.config import settings, tags_metadata
 from fastapi.responses import StreamingResponse
 from services.streaming import stream_answer_sync
 from config.cors import configure_cors
+from services.audit_sessions import (
+    list_audit_sessions,
+    get_audit_sessions_by_user,
+    get_audit_session_by_id,
+    get_audit_sessions_by_active_status,
+    get_audit_sessions_by_domain,
+    search_audit_sessions,
+    create_audit_session,
+    update_audit_session
+)
 
 logging.basicConfig(
     level=logging.DEBUG,  # or DEBUG
@@ -266,6 +288,204 @@ def get_compliance_domains(
 )
 def get_compliance_domain(code: str) -> ComplianceDomain:
     return get_compliance_domain_by_code(code)
+
+@router_v1.get("/audit-sessions",
+    summary="List all audit sessions with pagination",
+    description="Fetches paginated audit sessions from the Supabase 'audit_sessions' table.",
+    response_model=List[AuditSessionResponse],
+    tags=["Audit Sessions"],
+)
+def get_all_audit_sessions(
+    skip: int = Query(0, ge=0, description="Number of records to skip"), 
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return")
+) -> List[AuditSessionResponse]:
+    """Get all audit sessions with pagination."""
+    return list_audit_sessions(skip=skip, limit=limit)
+
+@router_v1.get("/audit-sessions/user/{user_id}",
+    summary="Get audit sessions by user ID",
+    description="Fetches audit sessions for a specific user with pagination.",
+    response_model=List[AuditSessionResponse],
+    tags=["Audit Sessions"],
+)
+def get_user_audit_sessions(
+    user_id: str = Path(..., description="User ID to filter sessions"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return")
+) -> List[AuditSessionResponse]:
+    """Get audit sessions for a specific user."""
+    return get_audit_sessions_by_user(user_id=user_id, skip=skip, limit=limit)
+
+@router_v1.get("/audit-sessions/{session_id}",
+    summary="Get audit session by ID",
+    description="Fetches a single audit session by its ID.",
+    response_model=AuditSessionResponse,
+    tags=["Audit Sessions"],
+)
+def get_audit_session(
+    session_id: str = Path(..., description="Audit session ID")
+) -> AuditSessionResponse:
+    """Get a single audit session by ID."""
+    return get_audit_session_by_id(session_id=session_id)
+
+@router_v1.get("/audit-sessions/status/{is_active}",
+    summary="Get audit sessions by active status",
+    description="Fetches audit sessions filtered by active/inactive status.",
+    response_model=List[AuditSessionResponse],
+    tags=["Audit Sessions"],
+)
+def get_audit_sessions_by_status(
+    is_active: bool = Path(..., description="Active status filter (true/false)"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return")
+) -> List[AuditSessionResponse]:
+    """Get audit sessions by active status."""
+    return get_audit_sessions_by_active_status(
+        is_active=is_active, skip=skip, limit=limit
+    )
+
+@router_v1.get("/audit-sessions/domain/{compliance_domain}",
+    summary="Get audit sessions by compliance domain",
+    description="Fetches audit sessions for a specific compliance domain.",
+    response_model=List[AuditSessionResponse],
+    tags=["Audit Sessions"],
+)
+def get_audit_sessions_by_compliance_domain(
+    compliance_domain: str = Path(..., description="Compliance domain (e.g. ISO27001)"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return")
+) -> List[AuditSessionResponse]:
+    return get_audit_sessions_by_domain(
+        compliance_domain=compliance_domain, skip=skip, limit=limit
+    )
+
+@router_v1.post("/audit-sessions/search",
+    summary="Search audit sessions with multiple filters",
+    description="Advanced search for audit sessions with optional filters for domain, user, dates, and status.",
+    response_model=List[AuditSessionResponse],
+    tags=["Audit Sessions"],
+)
+def search_audit_sessions_endpoint(
+    search_request: AuditSessionSearchRequest
+) -> List[AuditSessionResponse]:
+    return search_audit_sessions(
+        compliance_domain=search_request.compliance_domain,
+        user_id=search_request.user_id,
+        started_at=search_request.started_at,
+        ended_at=search_request.ended_at,
+        is_active=search_request.is_active,
+        skip=search_request.skip,
+        limit=search_request.limit
+    )
+
+@router_v1.post("/audit-sessions",
+    summary="Create a new audit session",
+    description="Creates a new audit session for compliance tracking. Returns the created session with generated ID and timestamps.",
+    response_model=AuditSessionResponse,
+    tags=["Audit Sessions"],
+    status_code=201
+)
+def create_new_audit_session(
+    session_data: AuditSessionCreate = Body(..., description="Audit session data")
+) -> AuditSessionResponse:
+    return create_audit_session(
+        user_id=session_data.user_id,
+        session_name=session_data.session_name,
+        compliance_domain=session_data.compliance_domain,
+        ip_address=session_data.ip_address,
+        user_agent=session_data.user_agent
+    )
+
+@router_v1.patch("/audit-sessions/{session_id}",
+    summary="Update an audit session",
+    description="Updates an existing audit session with new information. Only provided fields will be updated.",
+    response_model=AuditSessionResponse,
+    tags=["Audit Sessions"],
+)
+def update_existing_audit_session(
+    session_id: str = Path(..., description="Audit session ID to update"),
+    update_data: AuditSessionUpdate = Body(..., description="Fields to update")
+) -> AuditSessionResponse:
+    return update_audit_session(
+        session_id=session_id,
+        ended_at=update_data.ended_at,
+        session_summary=update_data.session_summary,
+        is_active=update_data.is_active,
+        total_queries=update_data.total_queries
+    )
+
+@router_v1.put("/audit-sessions/{session_id}/close",
+    summary="Close an audit session",
+    description="Convenience endpoint to close an active audit session with optional summary.",
+    response_model=AuditSessionResponse,
+    tags=["Audit Sessions"],
+)
+def close_audit_session(
+    session_id: str = Path(..., description="Audit session ID to close"),
+    session_summary: Optional[str] = Body(None, description="Optional summary of the session", embed=True)
+) -> AuditSessionResponse:
+    from datetime import datetime, timezone
+    
+    return update_audit_session(
+        session_id=session_id,
+        ended_at=datetime.now(timezone.utc),
+        session_summary=session_summary,
+        is_active=False
+    )
+
+@router_v1.put("/audit-sessions/{session_id}/activate",
+    summary="Reactivate an audit session",
+    description="Reactivate a closed audit session for continued use.",
+    response_model=AuditSessionResponse,
+    tags=["Audit Sessions"],
+)
+def activate_audit_session(
+    session_id: str = Path(..., description="Audit session ID to reactivate")
+) -> AuditSessionResponse:
+    return update_audit_session(
+        session_id=session_id,
+        ended_at=None,
+        is_active=True
+    )
+
+@router_v1.delete("/audit-sessions/{session_id}",
+    summary="Delete an audit session",
+    description="Soft delete an audit session (sets is_active=False). For compliance, sessions are typically not hard deleted.",
+    response_model=AuditSessionResponse,
+    tags=["Audit Sessions"],
+)
+def delete_audit_session_endpoint(
+    session_id: str = Path(..., description="Audit session ID to delete"),
+    hard_delete: bool = Query(False, description="If true, permanently delete the session (not recommended for compliance)")
+) -> Dict[str, Any]:
+    from services.audit_sessions import delete_audit_session
+    
+    return delete_audit_session(
+        session_id=session_id,
+        soft_delete=not hard_delete
+    )
+
+@router_v1.get("/audit-sessions/statistics",
+    summary="Get audit session statistics",
+    description="Get comprehensive statistics about audit sessions for reporting and analytics.",
+    response_model=Dict[str, Any],
+    tags=["Audit Sessions"],
+)
+def get_audit_session_statistics_endpoint(
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    start_date: Optional[datetime] = Query(None, description="Filter sessions started after this date"),
+    end_date: Optional[datetime] = Query(None, description="Filter sessions started before this date")
+) -> Dict[str, Any]:
+    from services.audit_sessions import get_audit_session_statistics
+    
+    return get_audit_session_statistics(
+        compliance_domain=compliance_domain,
+        user_id=user_id,
+        start_date=start_date,
+        end_date=end_date
+    )
+
 
 app.include_router(router_v1)
 
