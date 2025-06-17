@@ -1,16 +1,21 @@
 import os
-from typing import Any
 import uuid
 from fastapi import FastAPI, HTTPException, APIRouter, File, UploadFile
 from services.chat_history import get_chat_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.db_check import check_database_connection
-from services.document import list_documents
+from services.document import (
+    list_documents, 
+    get_documents_by_source_filename,
+    get_documents_by_compliance_domain, 
+    get_documents_by_version,
+    get_documents_by_domain_and_version
+)
 from services.history import get_history
 from services.ingestion import ingest_pdf_sync
 from services.qa import answer_question
 from services.schemas import QueryRequest, QueryResponse, ChatHistoryItem, UploadResponse
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional
 import logging
 from fastapi import Query
 from config.config import settings, tags_metadata
@@ -41,13 +46,77 @@ def test_db():
     return {"status": "ok", "result": data}
 
 @router_v1.get("/documents",
-    summary="List documents with pagination",
-    description="Fetches paginated rows from the Supabase 'documents' table.",
+    summary="List documents with filtering and pagination",
+    description="Fetches paginated rows from the Supabase 'documents' table with optional filtering by compliance domain, version, and source filename.",
     response_model=List[Dict[str, Any]],
     tags=["Documents"],
 )
-def get_all_documents(skip: int = Query(0, ge=0), limit: int = Query(10, ge=1, le=100)) -> Any:
-    return list_documents(skip=skip, limit=limit)
+def get_all_documents(
+    skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain (e.g., 'GDPR', 'ISO27001')"),
+    document_version: Optional[str] = Query(None, description="Filter by document version (e.g., 'v1.2', '2024-Q1')"),
+    source_filename: Optional[str] = Query(None, description="Filter by source filename (exact match or partial)")
+) -> Any:
+    return list_documents(
+        skip=skip, 
+        limit=limit, 
+        compliance_domain=compliance_domain,
+        document_version=document_version,
+        source_filename=source_filename
+    )
+
+@router_v1.get("/documents/by-source/{source_filename}",
+    summary="Get all chunks from a specific source file",
+    description="Fetches all document chunks from a specific source PDF file, ordered by chunk index.",
+    response_model=List[Dict[str, Any]],
+    tags=["Documents"],
+)
+def get_documents_by_source(source_filename: str) -> Any:
+    return get_documents_by_source_filename(source_filename)
+
+
+@router_v1.get("/documents/by-domain/{compliance_domain}",
+    summary="Get documents by compliance domain",
+    description="Fetches all documents within a specific compliance domain (e.g., GDPR, ISO27001).",
+    response_model=List[Dict[str, Any]],
+    tags=["Documents"],
+)
+def get_documents_by_domain(
+    compliance_domain: str,
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return")
+) -> Any:
+    return get_documents_by_compliance_domain(compliance_domain, skip, limit)
+
+
+@router_v1.get("/documents/by-version/{document_version}",
+    summary="Get documents by version",
+    description="Fetches all documents with a specific version identifier.",
+    response_model=List[Dict[str, Any]],
+    tags=["Documents"],
+)
+def get_documents_by_version(
+    document_version: str,
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return")
+) -> Any:
+    return get_documents_by_version(document_version, skip, limit)
+
+
+@router_v1.get("/documents/by-domain-version/{compliance_domain}/{document_version}",
+    summary="Get documents by domain and version",
+    description="Fetches documents filtered by both compliance domain and version.",
+    response_model=List[Dict[str, Any]],
+    tags=["Documents"],
+)
+def get_documents_by_domain_version(
+    compliance_domain: str,
+    document_version: str,
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return")
+) -> Any:
+    return get_documents_by_domain_and_version(compliance_domain, document_version, skip, limit)
 
 @router_v1.post("/query",
     response_model=QueryResponse,
