@@ -3,6 +3,7 @@ from typing import Any
 import uuid
 from fastapi import FastAPI, HTTPException, APIRouter, File, UploadFile
 from services.chat_history import get_chat_history
+from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.db_check import check_database_connection
 from services.document import list_documents
 from services.history import get_history
@@ -174,6 +175,28 @@ def upload_pdf(
         # Clean up file handle
         if hasattr(file.file, 'close'):
             file.file.close()
+
+@router_v1.get("/compliance-domains",
+    summary="List compliance domains with pagination",
+    description="Fetches paginated rows from the Supabase 'compliance_domains' table.",
+    response_model=List[ComplianceDomain],
+    tags=["Compliance"],
+)
+def get_compliance_domains(
+    skip: Optional[int] = Query(0, ge=0, description="Number of domains to skip for pagination"),
+    limit: Optional[int] = Query(10, ge=1, le=100, description="Maximum number of domains to return"),
+    is_active: Optional[bool] = Query(None, description="Filter by active status. If None, returns all domains")
+) -> List[ComplianceDomain]:
+    return list_compliance_domains(skip=skip or 0, limit=limit or 10, is_active=is_active)
+
+@router_v1.get("/compliance-domains/{code}",
+    summary="Get compliance domain by code",
+    description="Fetches a specific compliance domain by its unique code.",
+    response_model=ComplianceDomain,
+    tags=["Compliance"],
+)
+def get_compliance_domain(code: str) -> ComplianceDomain:
+    return get_compliance_domain_by_code(code)
 
 app.include_router(router_v1)
 

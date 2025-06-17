@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     supabase_table_documents: str = Field("documents", env="SUPABASE_TABLE_DOCUMENTS")
     supabase_table_chat_history: str = Field("chat_history", env="SUPABASE_TABLE_CHAT_HISTORY")
     supabase_table_pdf_ingestion: str = Field("pdf_ingestion", env="SUPABASE_TABLE_PDF_INGESTION")
+    supabase_table_compliance_domains: str = Field("compliance_domains", env="SUPABASE_TABLE_COMPLIANCE_DOMAINS")
 
     # OpenAI
     openai_api_key: str = Field(..., env="OPENAI_API_KEY")

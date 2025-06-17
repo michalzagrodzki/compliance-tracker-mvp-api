@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Any, List, Dict, Optional
+from datetime import datetime
 
 class UploadResponse(BaseModel):
     message: str
@@ -51,3 +52,16 @@ class DocumentListItem(BaseModel):
     total_chunks: Optional[int]
     ingested_at: str
     processing_status: str
+
+class ComplianceDomain(BaseModel):
+    code: str = Field(..., description="Unique domain code (e.g., 'GDPR', 'ISO27001')")
+    name: str = Field(..., description="Human-readable domain name")
+    description: Optional[str] = Field(None, description="Detailed description of the compliance domain")
+    is_active: bool = Field(True, description="Whether the domain is currently active")
+    created_at: datetime = Field(..., description="When the domain was created")
+
+class ComplianceDomainsResponse(BaseModel):
+    domains: List[ComplianceDomain]
+    total: int = Field(..., description="Total number of domains (for pagination)")
+    page: int = Field(..., description="Current page number")
+    limit: int = Field(..., description="Items per page")
