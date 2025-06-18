@@ -14,9 +14,11 @@ class UploadResponse(BaseModel):
 class QueryRequest(BaseModel):
     question: str
     conversation_id: Optional[str] = Field(None, description="Conversation UUID")
-    compliance_domain: Optional[str] = Field(None, description="Filter results by compliance domain")
-    match_threshold: Optional[float] = Field(0.75, description="Similarity threshold for document matching")
-    match_count: Optional[int] = Field(5, description="Maximum number of documents to retrieve")
+    audit_session_id: Optional[str] = Field(None, description="Audit session UUID for compliance tracking")
+    compliance_domain: Optional[str] = Field(None, description="Compliance domain (e.g., 'GDPR', 'ISO27001')")
+    match_threshold: Optional[float] = Field(0.75, description="Similarity match threshold", ge=0.0, le=1.0)
+    match_count: Optional[int] = Field(5, description="Maximum number of documents to retrieve", ge=1, le=20)
+    user_id: Optional[str] = Field(None, description="User ID for audit tracking")
 
 class SourceDoc(BaseModel):
     page_content: str | None = None
@@ -27,8 +29,10 @@ class SourceDoc(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     source_docs: List[SourceDoc]
-    compliance_domain_filter: Optional[str] = Field(None, description="Applied compliance domain filter")
-
+    conversation_id: str
+    audit_session_id: Optional[str] = None
+    compliance_domain: Optional[str] = None
+    response_time_ms: Optional[int] = None
 class ChatHistoryItem(BaseModel):
     """Enhanced chat history item matching the new table schema"""
     id: str

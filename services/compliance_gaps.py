@@ -473,40 +473,49 @@ def get_compliance_gaps_statistics(
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 def log_document_access(
-    user_id: str,
+    user_id: Optional[str],
     document_id: str,
     access_type: str,
     audit_session_id: Optional[str] = None,
-    query_text: Optional[str] = None
+    query_text: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None
 ) -> None:
     try:
-        access_log = {
+        access_data = {
             "user_id": user_id,
             "document_id": document_id,
             "access_type": access_type,
-            "accessed_at": datetime.now(timezone.utc).isoformat()
+            "accessed_at": datetime.now(timezone.utc).isoformat(),
+            "audit_session_id": audit_session_id,
+            "query_text": query_text,
+            "ip_address": ip_address,
+            "user_agent": user_agent
         }
         
-        if audit_session_id:
-            access_log["audit_session_id"] = audit_session_id
-        
-        if query_text:
-            access_log["query_text"] = query_text
+        access_data = {k: v for k, v in access_data.items() if v is not None}
         
         resp = (
             supabase
             .table(settings.supabase_table_document_access_log)
-            .insert(access_log)
+            .insert(access_data)
             .execute()
         )
         
         if hasattr(resp, "error") and resp.error:
-            logger.warning(f"Failed to log document access: {resp.error.message}")
-        else:
-            logger.debug(f"Logged {access_type} access to document {document_id} by user {user_id}")
+            logger.error("Failed to log document access", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to log document access: {resp.error.message}"
+            )
             
+        logger.debug(f"Logged access to document {document_id} by user {user_id}")
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.warning(f"Failed to log document access: {e}")
+        logger.error(f"Failed to log document access for document {document_id}", exc_info=True)
+        pass
 
 def get_document_by_id(document_id: str) -> Optional[Dict[str, Any]]:
     try:
