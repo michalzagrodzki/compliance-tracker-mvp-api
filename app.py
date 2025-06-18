@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from services.authentication import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
 from services.chat_history import get_audit_session_history, get_chat_history, get_domain_history, get_user_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
+from services.compliance_gaps import assign_gap_to_user, create_compliance_gap, get_chat_history_by_id, get_compliance_gap_by_id, get_compliance_gaps_statistics, get_document_by_id, get_gaps_by_audit_session, get_gaps_by_domain, get_gaps_by_user, list_compliance_gaps, log_document_access, mark_gap_reviewed, update_compliance_gap, update_gap_status
 from services.db_check import check_database_connection
 from services.document import (
     list_documents, 
@@ -17,6 +18,10 @@ from services.document import (
 )
 from services.schemas import (
     ComplianceDomain,
+    ComplianceGapCreate,
+    ComplianceGapFromChatHistoryRequest,
+    ComplianceGapStatusUpdate,
+    ComplianceGapUpdate,
     QueryRequest, 
     QueryResponse, 
     ChatHistoryItem, 
@@ -29,7 +34,7 @@ from services.schemas import (
 from services.history import get_history
 from services.ingestion import ingest_pdf_sync
 from services.qa import answer_question
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Dict, Optional, Union
 import logging
 from config.config import settings, tags_metadata
 from fastapi.responses import StreamingResponse
@@ -799,6 +804,293 @@ def get_users_by_domain_endpoint(
 ):
     return get_users_by_compliance_domain(domain, skip, limit)
 
+@router_v1.get("/compliance-gaps",
+    summary="List compliance gaps with filtering",
+    description="Get paginated compliance gaps with optional filtering by domain, type, risk level, etc.",
+    response_model=List[Dict[str, Any]],
+    tags=["Compliance Gaps"],
+    )
+def get_all_compliance_gaps(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
+    gap_type: Optional[str] = Query(None, description="Filter by gap type"),
+    risk_level: Optional[str] = Query(None, description="Filter by risk level"),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    assigned_to: Optional[str] = Query(None, description="Filter by assigned user"),
+    user_id: Optional[str] = Query(None, description="Filter by creator user"),
+    audit_session_id: Optional[str] = Query(None, description="Filter by audit session"),
+    detection_method: Optional[str] = Query(None, description="Filter by detection method"),
+    regulatory_requirement: Optional[bool] = Query(None, description="Filter by regulatory requirement status"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return list_compliance_gaps(
+        skip=skip,
+        limit=limit,
+        compliance_domain=compliance_domain,
+        gap_type=gap_type,
+        risk_level=risk_level,
+        status=status,
+        assigned_to=assigned_to,
+        user_id=user_id,
+        audit_session_id=audit_session_id,
+        detection_method=detection_method,
+        regulatory_requirement=regulatory_requirement
+    )
+
+@router_v1.get("/compliance-gaps/{gap_id}",
+    summary="Get compliance gap by ID",
+    description="Get detailed information about a specific compliance gap",
+    response_model=Dict[str, Any],
+    tags=["Compliance Gaps"],
+)
+def get_compliance_gap(
+    gap_id: str = Path(..., description="Compliance gap UUID"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return get_compliance_gap_by_id(gap_id)
+
+@router_v1.post("/compliance-gaps",
+    summary="Create new compliance gap",
+    description="Create a new compliance gap record from manual input or existing chat history",
+    response_model=Dict[str, Any],
+    tags=["Compliance Gaps"],
+    status_code=201
+)
+def create_new_compliance_gap(
+    request: Union[ComplianceGapCreate, ComplianceGapFromChatHistoryRequest] = Body(
+        ..., 
+        discriminator="creation_method",
+        description="Either a complete gap definition or a reference to chat history"
+    ),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    """
+    Create a new compliance gap either by providing full details or by referencing an existing chat history item.
+    
+    There are two ways to create a gap:
+    1. Provide a complete ComplianceGapCreate object with all required details
+    2. Provide a ComplianceGapFromChatHistoryRequest with chat_history_id and additional metadata
+    
+    The creation_method field in the request body determines which approach is used.
+    """
+    try:
+        # Check the creation method
+        if request.creation_method == "from_chat_history":
+            logging.info(f"Creating compliance gap from chat history ID: {request.chat_history_id}")
+            
+            chat_history = get_chat_history_by_id(request.chat_history_id)
+            if not chat_history:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Chat history with ID {request.chat_history_id} not found"
+                )
+            
+            search_results = []
+            if chat_history.get("source_document_ids"):
+                for doc_id in chat_history.get("source_document_ids", []):
+                    try:
+                        doc = get_document_by_id(doc_id)
+                        if doc:
+                            search_results.append({
+                                "id": doc_id,
+                                "content": doc.get("content", ""),
+                                "metadata": doc.get("metadata", {}),
+                                "similarity": doc.get("similarity", 0.0)
+                            })
+                    except Exception as e:
+                        logging.warning(f"Failed to fetch document {doc_id}: {e}")
+            
+            gap_data = {
+                "user_id": current_user.id,
+                "chat_history_id": request.chat_history_id,
+                "audit_session_id": chat_history.get("audit_session_id") or request.audit_session_id,
+                "compliance_domain": chat_history.get("compliance_domain") or request.compliance_domain,
+                "gap_type": request.gap_type,
+                "gap_category": request.gap_category,
+                "gap_title": request.gap_title,
+                "gap_description": request.gap_description,
+                "original_question": chat_history.get("question", ""),
+                "search_terms_used": request.search_terms_used,
+                "similarity_threshold_used": chat_history.get("match_threshold"),
+                "best_match_score": max([r.get("similarity", 0) for r in search_results], default=0) if search_results else None,
+                "risk_level": request.risk_level,
+                "business_impact": request.business_impact,
+                "regulatory_requirement": request.regulatory_requirement,
+                "potential_fine_amount": request.potential_fine_amount,
+                "recommendation_type": request.recommendation_type,
+                "recommendation_text": request.recommendation_text,
+                "recommended_actions": request.recommended_actions,
+                "related_documents": request.related_documents or chat_history.get("source_document_ids", []),
+                "detection_method": "manual_review",  # Since this is created manually from chat history
+                "confidence_score": request.confidence_score,
+                "false_positive_likelihood": request.false_positive_likelihood,
+                "auto_generated": False,
+                "detected_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
+            }
+        elif request.creation_method == "direct":
+            logging.info(f"Creating compliance gap with title: {request.gap_title}")
+            
+            gap_data = request.dict(exclude={"creation_method"})
+            
+            if "user_id" not in gap_data or not gap_data["user_id"]:
+                gap_data["user_id"] = current_user.id
+
+            gap_data["detected_at"] = datetime.now(timezone.utc)
+            gap_data["created_at"] = datetime.now(timezone.utc)
+            gap_data["updated_at"] = datetime.now(timezone.utc)
+            gap_data["auto_generated"] = False
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid creation_method: {request.creation_method}"
+            )
+        
+        created_gap = create_compliance_gap(gap_data)
+        
+        if created_gap and current_user and "related_documents" in gap_data and gap_data["related_documents"]:
+            try:
+                for doc_id in gap_data["related_documents"]:
+                    log_document_access(
+                        user_id=current_user.id,
+                        document_id=doc_id,
+                        access_type="reference",
+                        audit_session_id=gap_data.get("audit_session_id"),
+                        query_text=gap_data.get("original_question")
+                    )
+            except Exception as e:
+                logging.warning(f"Failed to log document access: {e}")
+        
+        return created_gap
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error creating compliance gap: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create compliance gap: {str(e)}"
+        )
+
+@router_v1.patch("/compliance-gaps/{gap_id}",
+    summary="Update compliance gap",
+    description="Update details of an existing compliance gap",
+    response_model=Dict[str, Any],
+    tags=["Compliance Gaps"],
+)
+def update_existing_compliance_gap(
+    gap_id: str = Path(..., description="Compliance gap UUID"),
+    update_data: ComplianceGapUpdate = Body(..., description="Fields to update"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    update_dict = update_data.model_dump(exclude_unset=True)
+    update_dict["updated_at"] = datetime.now(timezone.utc)
+    
+    return update_compliance_gap(gap_id, update_dict)
+
+@router_v1.put("/compliance-gaps/{gap_id}/status",
+    summary="Update compliance gap status",
+    description="Change the status of a compliance gap (e.g., to 'acknowledged', 'in_progress', 'resolved')",
+    response_model=Dict[str, Any],
+    tags=["Compliance Gaps"],
+)
+def update_compliance_gap_status(
+    gap_id: str = Path(..., description="Compliance gap UUID"),
+    status_update: ComplianceGapStatusUpdate = Body(..., description="New status data"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return update_gap_status(gap_id, status_update.status, status_update.resolution_notes)
+
+@router_v1.put("/compliance-gaps/{gap_id}/assign",
+    summary="Assign compliance gap",
+    description="Assign a compliance gap to a specific user for resolution",
+    response_model=Dict[str, Any],
+    tags=["Compliance Gaps"],
+)
+def assign_compliance_gap(
+    gap_id: str = Path(..., description="Compliance gap UUID"),
+    assigned_to: str = Body(..., description="User ID to assign to", embed=True),
+    due_date: Optional[datetime] = Body(None, description="Due date for resolution", embed=True),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    return assign_gap_to_user(gap_id, assigned_to, due_date)
+
+@router_v1.put("/compliance-gaps/{gap_id}/review",
+    summary="Mark compliance gap as reviewed",
+    description="Mark a compliance gap as reviewed with optional notes",
+    response_model=Dict[str, Any],
+    tags=["Compliance Gaps"],
+)
+def review_compliance_gap(
+    gap_id: str = Path(..., description="Compliance gap UUID"),
+    reviewer_notes: Optional[str] = Body(None, description="Notes from the review", embed=True),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    return mark_gap_reviewed(gap_id, reviewer_notes)
+
+@router_v1.get("/compliance-domains/{domain_code}/gaps",
+    summary="Get compliance gaps by domain",
+    description="Get all compliance gaps for a specific compliance domain",
+    response_model=List[Dict[str, Any]],
+    tags=["Compliance Gaps"],
+)
+def get_domain_compliance_gaps(
+    domain_code: str = Path(..., description="Compliance domain code"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
+    status_filter: Optional[str] = Query(None, description="Filter by status"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return get_gaps_by_domain(domain_code, skip, limit, status_filter)
+
+@router_v1.get("/users/{user_id}/gaps",
+    summary="Get compliance gaps by user",
+    description="Get compliance gaps created by or assigned to a specific user",
+    response_model=List[Dict[str, Any]],
+    tags=["Compliance Gaps"],
+)
+def get_user_compliance_gaps(
+    user_id: str = Path(..., description="User UUID"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
+    assigned_only: bool = Query(False, description="If true, only show gaps assigned to this user"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return get_gaps_by_user(user_id, skip, limit, assigned_only)
+
+@router_v1.get("/audit-sessions/{audit_session_id}/gaps",
+    summary="Get compliance gaps by audit session",
+    description="Get all compliance gaps identified during a specific audit session",
+    response_model=List[Dict[str, Any]],
+    tags=["Compliance Gaps"],
+)
+def get_audit_session_compliance_gaps(
+    audit_session_id: str = Path(..., description="Audit session UUID"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return get_gaps_by_audit_session(audit_session_id)
+
+@router_v1.get("/compliance-gaps/statistics",
+    summary="Get compliance gaps statistics",
+    description="Get statistical summaries of compliance gaps",
+    response_model=Dict[str, Any],
+    tags=["Compliance Gaps"],
+)
+def get_compliance_gap_statistics(
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    start_date: Optional[datetime] = Query(None, description="Filter gaps detected after this date"),
+    end_date: Optional[datetime] = Query(None, description="Filter gaps detected before this date"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return get_compliance_gaps_statistics(
+        compliance_domain=compliance_domain,
+        user_id=user_id,
+        start_date=start_date,
+        end_date=end_date
+    )
 app.include_router(router_v1)
 
 if __name__ == "__main__":

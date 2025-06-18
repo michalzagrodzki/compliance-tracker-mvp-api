@@ -96,6 +96,10 @@ tags_metadata = [
         "description": "Compliance domain management operations.",
     },
     {
+        "name": "Compliance Gaps",
+        "description": "Compliance gaps operations.",
+    },
+    {
         "name": "Users",
         "description": "User-related operations and history.",
     },
