@@ -1,10 +1,13 @@
 ## Setup
 
-Create and activate a virtual environment:
+# Create and activate virtual environment
 `python3 -m venv .venv && source .venv/bin/activate`
 
-Install dependencies:
-`pip install -r requirements.txt`
+# Install project in editable mode (includes all dependencies)
+`pip install -e .`
 
-Start the application:
+# Install dev dependencies
+`pip install -e ".[dev]"`
+
+# Start the application
 `uvicorn app:app --reload`
