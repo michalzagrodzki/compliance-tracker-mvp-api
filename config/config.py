@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     openai_model: str = Field("gpt-3.5-turbo", env="OPENAI_MODEL")
     embedding_model: str = Field("text-embedding-ada-002", env="EMBEDDING_MODEL")
 
+    # Authentication
+    jwt_secret_key: str = Field(..., env="JWT_SECRET_KEY")
+    jwt_algorithm: str = Field("HS256", env="JWT_ALGORITHM")
+    access_token_expire_minutes: int = Field(30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
+    refresh_token_expire_days: int = Field(7, env="REFRESH_TOKEN_EXPIRE_DAYS")
+    
     # RAG params
     top_k: int = Field(5, env="TOP_K")
     pdf_dir: str = Field("pdfs/", env="PDF_DIR")
