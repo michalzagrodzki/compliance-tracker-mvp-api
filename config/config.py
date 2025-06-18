@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     supabase_table_chat_history: str = Field("chat_history", env="SUPABASE_TABLE_CHAT_HISTORY")
     supabase_table_pdf_ingestion: str = Field("pdf_ingestion", env="SUPABASE_TABLE_PDF_INGESTION")
     supabase_table_compliance_domains: str = Field("compliance_domains", env="SUPABASE_TABLE_COMPLIANCE_DOMAINS")
+    supabase_table_audit_sessions: str = Field("audit_sessions", env="SUPABASE_TABLE_AUDIT_SESSIONS")
+    supabase_table_document_access_log: str = Field("document_access_log", env="SUPABASE_TABLE_DOCUMENT_ACCESS_LOG")
+    supabase_table_users: str = Field("users", env="SUPABASE_TABLE_USERS")
 
     # OpenAI
     openai_api_key: str = Field(..., env="OPENAI_API_KEY")

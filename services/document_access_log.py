@@ -12,7 +12,7 @@ def list_document_access_logs(skip: int = 0, limit: int = 10) -> List[Dict[str, 
         logger.info(f"Fetching document access logs: skip={skip}, limit={limit}")
         resp = (
             supabase
-            .table("document_access_log")
+            .table(settings.supabase_table_document_access_log)
             .select("id, user_id, document_id, access_type, audit_session_id, accessed_at, query_text, ip_address, user_agent")
             .order("accessed_at", desc=True)
             .limit(limit)
@@ -30,7 +30,7 @@ def get_document_access_log_by_id(log_id: str) -> Dict[str, Any]:
         logger.info(f"Fetching document access log by ID: {log_id}")
         resp = (
             supabase
-            .table("document_access_log")
+            .table(settings.supabase_table_document_access_log)
             .select("id, user_id, document_id, access_type, audit_session_id, accessed_at, query_text, ip_address, user_agent")
             .eq("id", log_id)
             .execute()
@@ -52,7 +52,7 @@ def list_document_access_logs_by_user(user_id: str, skip: int = 0, limit: int = 
         logger.info(f"Fetching document access logs for user: {user_id}, skip={skip}, limit={limit}")
         resp = (
             supabase
-            .table("document_access_log")
+            .table(settings.supabase_table_document_access_log)
             .select("id, user_id, document_id, access_type, audit_session_id, accessed_at, query_text, ip_address, user_agent")
             .eq("user_id", user_id)
             .order("accessed_at", desc=True)
@@ -71,7 +71,7 @@ def list_document_access_logs_by_document(document_id: str, skip: int = 0, limit
         logger.info(f"Fetching document access logs for document: {document_id}, skip={skip}, limit={limit}")
         resp = (
             supabase
-            .table("document_access_log")
+            .table(settings.supabase_table_document_access_log)
             .select("id, user_id, document_id, access_type, audit_session_id, accessed_at, query_text, ip_address, user_agent")
             .eq("document_id", document_id)
             .order("accessed_at", desc=True)
@@ -90,7 +90,7 @@ def list_document_access_logs_by_audit_session(audit_session_id: str, skip: int 
         logger.info(f"Fetching document access logs for audit session: {audit_session_id}, skip={skip}, limit={limit}")
         resp = (
             supabase
-            .table("document_access_log")
+            .table(settings.supabase_table_document_access_log)
             .select("id, user_id, document_id, access_type, audit_session_id, accessed_at, query_text, ip_address, user_agent")
             .eq("audit_session_id", audit_session_id)
             .order("accessed_at", desc=True)
@@ -117,7 +117,7 @@ def list_document_access_logs_filtered(
         
         query = (
             supabase
-            .table("document_access_log")
+            .table(settings.supabase_table_document_access_log)
             .select("id, user_id, document_id, access_type, audit_session_id, accessed_at, query_text, ip_address, user_agent")
         )
 
