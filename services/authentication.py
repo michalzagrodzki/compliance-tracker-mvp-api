@@ -1,5 +1,4 @@
 import logging
-import jwt
 from datetime import datetime
 from typing import Optional, Dict, List
 from fastapi import HTTPException, Depends, status
@@ -8,6 +7,7 @@ from supabase import Client
 from db.supabase_client import create_supabase_client
 from config.config import settings
 from pydantic import BaseModel, EmailStr
+from config.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ class UserSignup(BaseModel):
     email: EmailStr
     password: str
     full_name: str
-    role: str = "reader"
+    role: str = settings.reader_role
     compliance_domains: Optional[List[str]] = None
 
 class UserLogin(BaseModel):
@@ -249,7 +249,7 @@ def get_current_active_user(current_user: UserResponse = Depends(get_current_use
     return current_user
 
 def require_admin(current_user: UserResponse = Depends(get_current_active_user)) -> UserResponse:
-    if current_user.role != "admin":
+    if not settings.is_admin_role(current_user.role):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
@@ -257,7 +257,7 @@ def require_admin(current_user: UserResponse = Depends(get_current_active_user))
     return current_user
 
 def require_compliance_officer_or_admin(current_user: UserResponse = Depends(get_current_active_user)) -> UserResponse:
-    if current_user.role not in ["admin", "compliance_officer"]:
+    if not settings.has_elevated_permissions(current_user.role):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Compliance officer or admin access required"
@@ -266,7 +266,7 @@ def require_compliance_officer_or_admin(current_user: UserResponse = Depends(get
 
 def require_compliance_domain_access(domain: str):
     def check_domain_access(current_user: UserResponse = Depends(get_current_active_user)) -> UserResponse:
-        if current_user.role == "admin":
+        if settings.is_admin_role(current_user.role):
             return current_user  # Admins have access to all domains
         
         if domain not in current_user.compliance_domains:
