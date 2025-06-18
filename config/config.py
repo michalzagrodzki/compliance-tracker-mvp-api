@@ -34,6 +34,10 @@ settings = Settings()
 
 tags_metadata = [
     {
+        "name": "Authentication",
+        "description": "User authentication and authorization endpoints.",
+    },
+    {
         "name": "Health",
         "description": "Health-check and diagnostics endpoints.",
     },

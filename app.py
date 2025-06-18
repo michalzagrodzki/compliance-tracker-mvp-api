@@ -2,7 +2,9 @@ import datetime
 import os
 from pathlib import Path
 import uuid
-from fastapi import FastAPI, HTTPException, APIRouter, File, UploadFile, Form, Path, Body, Query
+from fastapi import Depends, FastAPI, HTTPException, APIRouter, File, UploadFile, Form, Path, Body, Query
+from fastapi.security import HTTPAuthorizationCredentials
+from services.authentication import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
 from services.chat_history import get_audit_session_history, get_chat_history, get_domain_history, get_user_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.db_check import check_database_connection
@@ -52,6 +54,19 @@ from services.document_access_log import (
     list_document_access_logs_by_audit_session,
     list_document_access_logs_filtered
 )
+from services.authentication import (
+    auth_service, 
+    UserSignup, 
+    UserLogin, 
+    TokenResponse, 
+    RefreshTokenRequest,
+    UserResponse,
+    get_current_user,
+    get_current_active_user,
+    require_admin,
+    require_compliance_officer_or_admin,
+    require_compliance_domain_access,
+)
 from datetime import datetime, timezone
 from services.audit_sessions import ( delete_audit_session, get_audit_session_statistics )
 
@@ -76,6 +91,52 @@ router_v1 = APIRouter(prefix="/v1")
 def test_db():
     data = check_database_connection()
     return {"status": "ok", "result": data}
+
+# Authentication endpoints
+@router_v1.post("/auth/signup",
+    response_model=TokenResponse,
+    summary="Register a new user",
+    description="Create a new user account with email and password",
+    tags=["Authentication"],
+    status_code=201
+)
+def signup(user_data: UserSignup):
+    return auth_service.signup(user_data)
+
+@router_v1.post("/auth/login",
+    response_model=TokenResponse,
+    summary="Login user",
+    description="Authenticate user with email and password",
+    tags=["Authentication"]
+)
+def login(login_data: UserLogin):
+    return auth_service.login(login_data)
+
+@router_v1.post("/auth/refresh",
+    response_model=TokenResponse,
+    summary="Refresh access token",
+    description="Get a new access token using refresh token",
+    tags=["Authentication"]
+)
+def refresh_token(refresh_data: RefreshTokenRequest):
+    return auth_service.refresh_token(refresh_data)
+
+@router_v1.post("/auth/logout",
+    summary="Logout user",
+    description="Logout user and invalidate tokens",
+    tags=["Authentication"]
+)
+def logout(credentials: HTTPAuthorizationCredentials = Depends(get_current_user)):
+    return auth_service.logout(credentials.credentials)
+
+@router_v1.get("/auth/me",
+    response_model=UserResponse,
+    summary="Get current user profile",
+    description="Get the profile of the currently authenticated user",
+    tags=["Authentication"]
+)
+def get_me(current_user: UserResponse = Depends(get_current_user)):
+    return current_user
 
 @router_v1.get("/documents",
     summary="List documents with filtering and pagination",
