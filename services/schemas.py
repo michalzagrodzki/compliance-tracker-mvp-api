@@ -159,7 +159,7 @@ class DocumentAccessLogItem(BaseModel):
 class CreateDocumentAccessLog(BaseModel):
     user_id: UUID | None = None
     document_id: UUID | None = None
-    access_type: str = Field(..., regex="^(view|search|download|reference)$")
+    access_type: str = Field(..., pattern="^(view|search|download|reference)$")
     audit_session_id: UUID | None = None
     query_text: str | None = None
     ip_address: str | None = None

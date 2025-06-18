@@ -48,4 +48,16 @@ tags_metadata = [
         "name": "Audit",
         "description": "Document access logging and audit trail operations.",
     },
+    {
+        "name": "Audit Sessions",
+        "description": "Audit session management and tracking operations.",
+    },
+    {
+        "name": "Compliance",
+        "description": "Compliance domain management operations.",
+    },
+    {
+        "name": "Users",
+        "description": "User-related operations and history.",
+    },
 ]

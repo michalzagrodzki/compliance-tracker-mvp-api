@@ -2,8 +2,8 @@ import datetime
 import os
 from pathlib import Path
 import uuid
-from fastapi import FastAPI, HTTPException, APIRouter, File, UploadFile
-from services.chat_history import get_audit_session_history, get_chat_history
+from fastapi import FastAPI, HTTPException, APIRouter, File, UploadFile, Form, Path, Body, Query
+from services.chat_history import get_audit_session_history, get_chat_history, get_domain_history, get_user_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.db_check import check_database_connection
 from services.document import (
@@ -29,12 +29,12 @@ from services.ingestion import ingest_pdf_sync
 from services.qa import answer_question
 from typing import Any, List, Dict, Optional
 import logging
-from fastapi import Query
 from config.config import settings, tags_metadata
 from fastapi.responses import StreamingResponse
 from services.streaming import stream_answer_sync
 from config.cors import configure_cors
 from services.audit_sessions import (
+    get_audit_session_statistics,
     list_audit_sessions,
     get_audit_sessions_by_user,
     get_audit_session_by_id,
@@ -52,6 +52,8 @@ from services.document_access_log import (
     list_document_access_logs_by_audit_session,
     list_document_access_logs_filtered
 )
+from datetime import datetime, timezone
+from services.audit_sessions import ( delete_audit_session, get_audit_session_statistics )
 
 logging.basicConfig(
     level=logging.DEBUG,  # or DEBUG
@@ -501,8 +503,6 @@ def close_audit_session(
     session_id: str = Path(..., description="Audit session ID to close"),
     session_summary: Optional[str] = Body(None, description="Optional summary of the session", embed=True)
 ) -> AuditSessionResponse:
-    from datetime import datetime, timezone
-    
     return update_audit_session(
         session_id=session_id,
         ended_at=datetime.now(timezone.utc),
@@ -535,7 +535,7 @@ def delete_audit_session_endpoint(
     session_id: str = Path(..., description="Audit session ID to delete"),
     hard_delete: bool = Query(False, description="If true, permanently delete the session (not recommended for compliance)")
 ) -> Dict[str, Any]:
-    from services.audit_sessions import delete_audit_session
+    
     
     return delete_audit_session(
         session_id=session_id,
@@ -554,8 +554,6 @@ def get_audit_session_statistics_endpoint(
     start_date: Optional[datetime] = Query(None, description="Filter sessions started after this date"),
     end_date: Optional[datetime] = Query(None, description="Filter sessions started before this date")
 ) -> Dict[str, Any]:
-    from services.audit_sessions import get_audit_session_statistics
-    
     return get_audit_session_statistics(
         compliance_domain=compliance_domain,
         user_id=user_id,
