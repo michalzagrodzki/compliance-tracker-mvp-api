@@ -1,6 +1,6 @@
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import HTTPException
 from db.supabase_client import create_supabase_client
 from config.config import settings

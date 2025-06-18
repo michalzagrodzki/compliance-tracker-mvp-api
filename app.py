@@ -69,6 +69,7 @@ from services.authentication import (
 )
 from datetime import datetime, timezone
 from services.audit_sessions import ( delete_audit_session, get_audit_session_statistics )
+from services.user_management import UserUpdate, activate_user, deactivate_user, get_user_by_id, get_users_by_compliance_domain, get_users_by_role, list_users, update_user
 
 logging.basicConfig(
     level=logging.DEBUG,  # or DEBUG
@@ -704,6 +705,99 @@ def get_filtered_document_access_logs(
         skip=skip,
         limit=limit
     )
+
+# User management endpoints (Admin only)
+@router_v1.get("/users",
+    summary="List all users",
+    description="Get paginated list of users (Admin only)",
+    response_model=List[Dict[str, Any]],
+    tags=["Users"]
+)
+def get_all_users(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    role: Optional[str] = Query(None, description="Filter by role"),
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    current_user: UserResponse = Depends(require_admin)
+):
+    return list_users(skip=skip, limit=limit, role=role, is_active=is_active)
+
+@router_v1.get("/users/{user_id}",
+    summary="Get user by ID",
+    description="Get specific user details (Admin only)",
+    response_model=Dict[str, Any],
+    tags=["Users"]
+)
+def get_user(
+    user_id: str,
+    current_user: UserResponse = Depends(require_admin)
+):
+    return get_user_by_id(user_id)
+
+@router_v1.patch("/users/{user_id}",
+    summary="Update user",
+    description="Update user profile (Admin only)",
+    response_model=Dict[str, Any],
+    tags=["Users"]
+)
+def update_user_profile(
+    user_id: str,
+    user_update: UserUpdate,
+    current_user: UserResponse = Depends(require_admin)
+):
+    return update_user(user_id, user_update, current_user.id)
+
+@router_v1.put("/users/{user_id}/deactivate",
+    summary="Deactivate user",
+    description="Deactivate user account (Admin only)",
+    response_model=Dict[str, Any],
+    tags=["Users"]
+)
+def deactivate_user_account(
+    user_id: str,
+    current_user: UserResponse = Depends(require_admin)
+):
+    return deactivate_user(user_id, current_user.id)
+
+@router_v1.put("/users/{user_id}/activate",
+    summary="Activate user",
+    description="Activate user account (Admin only)",
+    response_model=Dict[str, Any],
+    tags=["Users"]
+)
+def activate_user_account(
+    user_id: str,
+    current_user: UserResponse = Depends(require_admin)
+):
+    return activate_user(user_id, current_user.id)
+
+@router_v1.get("/users/role/{role}",
+    summary="Get users by role",
+    description="Get users with specific role (Admin only)",
+    response_model=List[Dict[str, Any]],
+    tags=["Users"]
+)
+def get_users_by_role_endpoint(
+    role: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    current_user: UserResponse = Depends(require_admin)
+):
+    return get_users_by_role(role, skip, limit)
+
+@router_v1.get("/users/domain/{domain}",
+    summary="Get users by compliance domain",
+    description="Get users with access to specific compliance domain (Admin only)",
+    response_model=List[Dict[str, Any]],
+    tags=["Users"]
+)
+def get_users_by_domain_endpoint(
+    domain: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    current_user: UserResponse = Depends(require_admin)
+):
+    return get_users_by_compliance_domain(domain, skip, limit)
 
 app.include_router(router_v1)
 
