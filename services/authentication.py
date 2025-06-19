@@ -34,7 +34,6 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
-    user: UserResponse
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
@@ -63,6 +62,13 @@ class AuthService:
                     status_code=400,
                     detail="Failed to create user account"
                 )
+
+            if auth_response.session is None:
+                logger.error(f"No session returned for user {user_data.email} despite email confirmation being disabled")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Authentication session not created. Please check Supabase configuration."
+                )
             
             user_profile = {
                 "id": auth_response.user.id,
@@ -82,13 +88,10 @@ class AuthService:
                     detail="Failed to create user profile"
                 )
             
-            user_record = users_response.data[0]
-            
             return TokenResponse(
                 access_token=auth_response.session.access_token,
                 refresh_token=auth_response.session.refresh_token,
                 expires_in=auth_response.session.expires_in,
-                user=UserResponse(**user_record)
             )
             
         except Exception as e:
@@ -136,7 +139,6 @@ class AuthService:
                 access_token=auth_response.session.access_token,
                 refresh_token=auth_response.session.refresh_token,
                 expires_in=auth_response.session.expires_in,
-                user=UserResponse(**user_record)
             )
             
         except HTTPException:
@@ -172,7 +174,6 @@ class AuthService:
                 access_token=auth_response.session.access_token,
                 refresh_token=auth_response.session.refresh_token,
                 expires_in=auth_response.session.expires_in,
-                user=UserResponse(**user_record)
             )
             
         except HTTPException:
