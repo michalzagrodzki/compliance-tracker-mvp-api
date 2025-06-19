@@ -14,9 +14,6 @@ logger = logging.getLogger(__name__)
 class UserSignup(BaseModel):
     email: EmailStr
     password: str
-    full_name: str
-    role: str = settings.reader_role
-    compliance_domains: Optional[List[str]] = None
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -55,8 +52,8 @@ class AuthService:
                 "password": user_data.password,
                 "options": {
                     "data": {
-                        "full_name": user_data.full_name,
-                        "role": user_data.role
+                        "full_name": "",
+                        "role": settings.reader_role
                     }
                 }
             })
@@ -70,9 +67,9 @@ class AuthService:
             user_profile = {
                 "id": auth_response.user.id,
                 "email": user_data.email,
-                "full_name": user_data.full_name,
-                "role": user_data.role,
-                "compliance_domains": user_data.compliance_domains or [],
+                "full_name": "",
+                "role": settings.reader_role,
+                "compliance_domains": [],
                 "is_active": True
             }
             
