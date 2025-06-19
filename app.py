@@ -2,10 +2,10 @@ import datetime
 import os
 from pathlib import Path
 import uuid
-from fastapi import Depends, FastAPI, HTTPException, APIRouter, File, UploadFile, Form, Path, Body, Query
+from fastapi import Depends, FastAPI, HTTPException, APIRouter, File, Request, UploadFile, Form, Path, Body, Query
 from fastapi.security import HTTPAuthorizationCredentials
 from services.authentication import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
-from services.chat_history import get_audit_session_history, get_chat_history, get_domain_history, get_user_history
+from services.chat_history import get_audit_session_history, get_chat_history, get_domain_history, get_user_history, insert_chat_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.compliance_gaps import assign_gap_to_user, create_compliance_gap, get_chat_history_by_id, get_compliance_gap_by_id, get_compliance_gaps_statistics, get_document_by_id, get_gaps_by_audit_session, get_gaps_by_domain, get_gaps_by_user, list_compliance_gaps, log_document_access, mark_gap_reviewed, update_compliance_gap, update_gap_status
 from services.db_check import check_database_connection
@@ -72,7 +72,7 @@ from services.authentication import (
     require_compliance_officer_or_admin,
     require_compliance_domain_access,
 )
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from services.audit_sessions import ( delete_audit_session, get_audit_session_statistics )
 from services.user_management import UserUpdate, activate_user, deactivate_user, get_user_by_id, get_users_by_compliance_domain, get_users_by_role, list_users, update_user
 
@@ -219,13 +219,207 @@ def get_documents_by_domain_version(
 
 @router_v1.post("/query",
     response_model=QueryResponse,
-    summary="Query the knowledge base",
-    description="Retrieval-Augmented Generation over ingested documents.",
+    summary="Query the knowledge base with compliance tracking",
+    description="Retrieval-Augmented Generation over ingested documents with full audit trail logging.",
     tags=["RAG"],
 )
-def query_qa(req: QueryRequest) -> QueryResponse:
-    answer, sources = answer_question(req.question, match_threshold=0.75, match_count=5)
-    return QueryResponse(answer=answer, source_docs=sources)
+def query_qa(req: QueryRequest, request: Request) -> QueryResponse:
+    start_time = time.time()
+    
+    # Extract client information for audit trail
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
+    # Validate audit session if provided
+    audit_session_data = None
+    if req.audit_session_id:
+        try:
+            audit_session_data = get_audit_session_by_id(req.audit_session_id)
+            if not audit_session_data.get("is_active", False):
+                raise HTTPException(status_code=400, detail="Audit session is not active")
+        except HTTPException as e:
+            if e.status_code == 404:
+                raise HTTPException(status_code=400, detail="Invalid audit session ID")
+            raise
+
+    # Set compliance domain from audit session or request
+    compliance_domain = None
+    if audit_session_data:
+        compliance_domain = audit_session_data.get("compliance_domain")
+    elif hasattr(req, 'compliance_domain') and req.compliance_domain:
+        compliance_domain = req.compliance_domain
+
+    # Execute the query with domain filtering if specified
+    answer, sources = answer_question(
+        question=req.question,
+        match_threshold=getattr(req, 'match_threshold', 0.75),
+        match_count=getattr(req, 'match_count', 5),
+        compliance_domain=compliance_domain
+    )
+    
+    end_time = time.time()
+    response_time_ms = int((end_time - start_time) * 1000)
+    
+    # Extract source document IDs for audit trail
+    source_document_ids = [source["id"] for source in sources]
+    
+    # Log chat history with audit context
+    conversation_id = req.conversation_id or str(uuid.uuid4())
+    
+    try:
+        insert_chat_history(
+            conversation_id=conversation_id,
+            question=req.question,
+            answer=answer,
+            audit_session_id=req.audit_session_id,
+            compliance_domain=compliance_domain,
+            source_document_ids=source_document_ids,
+            match_threshold=getattr(req, 'match_threshold', 0.75),
+            match_count=getattr(req, 'match_count', 5),
+            user_id=getattr(req, 'user_id', None),
+            response_time_ms=response_time_ms,
+            total_tokens_used=None
+        )
+    except Exception as e:
+        logging.warning(f"Failed to log chat history: {e}")
+    
+    # Log document access for audit trail
+    if req.audit_session_id and source_document_ids:
+        try:
+            for doc_id in source_document_ids:
+                log_document_access(
+                    user_id=getattr(req, 'user_id', None),
+                    document_id=doc_id,
+                    access_type="reference",
+                    audit_session_id=req.audit_session_id,
+                    query_text=req.question,
+                    ip_address=ip_address,
+                    user_agent=user_agent
+                )
+        except Exception as e:
+            logging.warning(f"Failed to log document access: {e}")
+    
+    # Update audit session query count
+    if req.audit_session_id and audit_session_data:
+        try:
+            current_count = audit_session_data.get("total_queries", 0)
+            update_audit_session(
+                session_id=req.audit_session_id,
+                total_queries=current_count + 1
+            )
+        except Exception as e:
+            logging.warning(f"Failed to update audit session query count: {e}")
+    
+    return QueryResponse(
+        answer=answer, 
+        source_docs=sources,
+        conversation_id=conversation_id,
+        audit_session_id=req.audit_session_id,
+        compliance_domain=compliance_domain,
+        response_time_ms=response_time_ms
+    )
+
+@router_v1.post("/query-stream",
+    response_model=None,
+    summary="Streamed Q&A with compliance tracking and history",
+    description="Streamed responses with full audit trail logging and compliance domain filtering.",
+    tags=["RAG"],
+)
+def query_stream(req: QueryRequest, request: Request):
+    start_time = time.time()
+    
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
+    if req.conversation_id:
+        try:
+            uuid.UUID(req.conversation_id)
+            conversation_id = req.conversation_id
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid conversation_id format (must be UUID)")
+    else:
+        conversation_id = str(uuid.uuid4())
+
+    audit_session_data = None
+    if req.audit_session_id:
+        try:
+            audit_session_data = get_audit_session_by_id(req.audit_session_id)
+            if not audit_session_data.get("is_active", False):
+                raise HTTPException(status_code=400, detail="Audit session is not active")
+        except HTTPException as e:
+            if e.status_code == 404:
+                raise HTTPException(status_code=400, detail="Invalid audit session ID")
+            raise
+
+    compliance_domain = None
+    if audit_session_data:
+        compliance_domain = audit_session_data.get("compliance_domain")
+    elif hasattr(req, 'compliance_domain') and req.compliance_domain:
+        compliance_domain = req.compliance_domain
+
+    history = get_history(
+        conversation_id=conversation_id,
+        audit_session_id=req.audit_session_id,
+        compliance_domain=compliance_domain
+    )
+
+    def event_generator():
+        response_start = time.time()
+        source_document_ids = []
+        
+        for token_data in stream_answer_sync(
+            question=req.question,
+            conversation_id=conversation_id,
+            history=history,
+            audit_session_id=req.audit_session_id,
+            compliance_domain=compliance_domain,
+            match_threshold=getattr(req, 'match_threshold', 0.75),
+            match_count=getattr(req, 'match_count', 5),
+            user_id=getattr(req, 'user_id', None),
+            ip_address=ip_address,
+            user_agent=user_agent
+        ):
+            if isinstance(token_data, dict) and "source_document_ids" in token_data:
+                source_document_ids = token_data["source_document_ids"]
+                continue
+            
+            yield token_data
+        
+        if req.audit_session_id and source_document_ids:
+            try:
+                for doc_id in source_document_ids:
+                    log_document_access(
+                        user_id=getattr(req, 'user_id', None),
+                        document_id=doc_id,
+                        access_type="reference",
+                        audit_session_id=req.audit_session_id,
+                        query_text=req.question,
+                        ip_address=ip_address,
+                        user_agent=user_agent
+                    )
+            except Exception as e:
+                logging.warning(f"Failed to log document access: {e}")
+        
+        # Update audit session query count
+        if req.audit_session_id and audit_session_data:
+            try:
+                current_count = audit_session_data.get("total_queries", 0)
+                update_audit_session(
+                    session_id=req.audit_session_id,
+                    total_queries=current_count + 1
+                )
+            except Exception as e:
+                logging.warning(f"Failed to update audit session query count: {e}")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "x-conversation-id": conversation_id,
+            "x-audit-session-id": req.audit_session_id or "",
+            "x-compliance-domain": compliance_domain or ""
+        }
+    )
 
 @router_v1.get("/history/{conversation_id}",
     response_model=List[ChatHistoryItem],
@@ -303,36 +497,6 @@ def read_user_history(
         audit_session_id=audit_session_id,
         limit=limit,
         skip=skip
-    )
-    
-@router_v1.post("/query-stream",
-    response_model=None,
-    summary="Streamed Q&A with history",
-    tags=["RAG"],
-)
-def query_stream(req: QueryRequest):
-    # 0) ensure we have a UUID to track this conversation
-    if req.conversation_id:
-        try:
-            uuid.UUID(req.conversation_id)
-            conversation_id = req.conversation_id
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid conversation_id format (must be UUID)")
-    else:
-        conversation_id = str(uuid.uuid4())
-
-    # 1) load history
-    history = get_history(conversation_id)
-
-    # 2) stream tokens, then append history at the end
-    def event_generator():
-        for token in stream_answer_sync(req.question, conversation_id, history):
-            yield token
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/plain; charset=utf-8",
-        headers={"x-conversation-id": conversation_id}
     )
 
 @router_v1.post("/upload",
