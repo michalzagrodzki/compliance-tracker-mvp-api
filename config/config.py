@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     supabase_table_audit_sessions: str = Field("audit_sessions", env="SUPABASE_TABLE_AUDIT_SESSIONS")
     supabase_table_document_access_log: str = Field("document_access_log", env="SUPABASE_TABLE_DOCUMENT_ACCESS_LOG")
     supabase_table_users: str = Field("users", env="SUPABASE_TABLE_USERS")
+    supabase_table_audit_reports: str = Field("audit_reports", env="SUPABASE_TABLE_AUDIT_REPORTS")
+    supabase_table_audit_report_versions: str = Field("audit_report_versions", env="SUPABASE_TABLE_AUDIT_REPORT_VERSIONS")
+    supabase_table_audit_report_distributions: str = Field("audit_report_distributions", env="SUPABASE_TABLE_AUDIT_REPORT_DISTRIBUTIONS")
 
     # OpenAI
     openai_api_key: str = Field(..., env="OPENAI_API_KEY")
@@ -38,6 +41,8 @@ class Settings(BaseSettings):
     # RAG params
     top_k: int = Field(5, env="TOP_K")
     pdf_dir: str = Field("pdfs/", env="PDF_DIR")
+    reports_dir: str = Field("reports/", env="REPORTS_DIR")
+
     class Config:
         env_file = ".env"
     
@@ -102,5 +107,9 @@ tags_metadata = [
     {
         "name": "Users",
         "description": "User-related operations and history.",
+    },
+    {
+        "name": "Audit",
+        "description": "Audit trail and access logging.",
     },
 ]

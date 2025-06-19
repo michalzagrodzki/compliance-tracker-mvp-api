@@ -70,7 +70,56 @@ from services.authentication import (
     get_current_active_user,
     require_admin,
     require_compliance_officer_or_admin,
-    require_compliance_domain_access,
+)
+from services.schemas import (
+    AuditReportCreate,
+    AuditReportUpdate, 
+    AuditReportResponse,
+    AuditReportGenerateRequest,
+    AuditReportStatusUpdate,
+    AuditReportSearchRequest,
+    AuditReportStatisticsResponse,
+    AuditReportBulkActionRequest,
+    AuditReportVersionCreate,
+    AuditReportVersionResponse,
+    AuditReportDistributionCreate,
+    AuditReportDistributionResponse,
+    AuditReportAccessLogRequest
+)
+from services.audit_reports import (
+    list_audit_reports,
+    get_audit_report_by_id,
+    create_audit_report,
+    update_audit_report,
+    delete_audit_report,
+    generate_audit_report_from_session,
+    get_audit_report_statistics
+)
+from services.audit_report_versions import (
+    list_audit_report_versions,
+    get_audit_report_version_by_id,
+    get_latest_audit_report_version,
+    get_audit_report_version_by_number,
+    create_audit_report_version,
+    compare_audit_report_versions,
+    restore_audit_report_version,
+    delete_audit_report_version,
+    get_version_history_summary
+)
+from services.audit_report_distributions import (
+    list_audit_report_distributions,
+    get_audit_report_distribution_by_id,
+    get_distributions_by_report_id,
+    create_audit_report_distribution,
+    log_distribution_access,
+    deactivate_distribution,
+    reactivate_distribution,
+    update_distribution_expiry,
+    get_distribution_statistics,
+    bulk_distribute_report,
+    delete_distribution,
+    cleanup_expired_distributions,
+    get_distribution_access_summary
 )
 from datetime import datetime, time, timezone
 from services.audit_sessions import ( delete_audit_session, get_audit_session_statistics )
@@ -1255,6 +1304,519 @@ def get_compliance_gap_statistics(
         start_date=start_date,
         end_date=end_date
     )
+
+@router_v1.get("/audit-reports",
+    summary="List audit reports with filtering",
+    description="Get paginated audit reports with optional filtering by domain, type, status, etc.",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit Reports"],
+)
+def get_all_audit_reports(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
+    report_type: Optional[str] = Query(None, description="Filter by report type"),
+    report_status: Optional[str] = Query(None, description="Filter by report status"),
+    user_id: Optional[str] = Query(None, description="Filter by creator user"),
+    audit_session_id: Optional[str] = Query(None, description="Filter by audit session"),
+    target_audience: Optional[str] = Query(None, description="Filter by target audience"),
+    confidentiality_level: Optional[str] = Query(None, description="Filter by confidentiality level"),
+    generated_after: Optional[datetime] = Query(None, description="Filter by generation date (after)"),
+    generated_before: Optional[datetime] = Query(None, description="Filter by generation date (before)"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return list_audit_reports(
+        skip=skip,
+        limit=limit,
+        compliance_domain=compliance_domain,
+        report_type=report_type,
+        report_status=report_status,
+        user_id=user_id,
+        audit_session_id=audit_session_id,
+        target_audience=target_audience,
+        confidentiality_level=confidentiality_level,
+        generated_after=generated_after,
+        generated_before=generated_before
+    )
+
+@router_v1.get("/audit-reports/{report_id}",
+    summary="Get audit report by ID",
+    description="Get detailed information about a specific audit report",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def get_audit_report(
+    report_id: str = Path(..., description="Audit report UUID"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return get_audit_report_by_id(report_id)
+
+@router_v1.post("/audit-reports",
+    summary="Create new audit report",
+    description="Create a new audit report manually",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+    status_code=201
+)
+def create_new_audit_report(
+    report_data: AuditReportCreate = Body(..., description="Audit report data"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    report_dict = report_data.model_dump()
+
+    if current_user.role != "admin" and str(report_dict.get("user_id")) != str(current_user.id):
+        report_dict["user_id"] = current_user.id
+    
+    created_report = create_audit_report(report_dict)
+
+    create_audit_report_version(
+        audit_report_id=created_report["id"],
+        changed_by=str(current_user.id),
+        change_description="Initial report creation",
+        change_type="draft_update",
+        report_snapshot=created_report
+    )
+    
+    return created_report
+
+@router_v1.post("/audit-reports/generate",
+    summary="Generate audit report from session",
+    description="Generate a comprehensive audit report from an existing audit session",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+    status_code=201
+)
+def generate_audit_report(
+    generate_request: AuditReportGenerateRequest = Body(..., description="Report generation parameters"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    generation_options = {
+        "include_technical_details": generate_request.include_technical_details,
+        "include_source_citations": generate_request.include_source_citations,
+        "include_confidence_scores": generate_request.include_confidence_scores,
+        "target_audience": generate_request.target_audience,
+        "confidentiality_level": generate_request.confidentiality_level
+    }
+    
+    report = generate_audit_report_from_session(
+        audit_session_id=str(generate_request.audit_session_id),
+        user_id=str(current_user.id),
+        report_title=generate_request.report_title,
+        report_type=generate_request.report_type,
+        **generation_options
+    )
+
+    if generate_request.auto_distribute and generate_request.distribution_list:
+        try:
+            bulk_distribute_report(
+                audit_report_id=report["id"],
+                recipients=generate_request.distribution_list,
+                distribution_method="email",
+                distribution_format="pdf",
+                distributed_by=str(current_user.id)
+            )
+        except Exception as e:
+            logging.warning(f"Auto-distribution failed: {e}")
+    
+    return report
+
+@router_v1.patch("/audit-reports/{report_id}",
+    summary="Update audit report",
+    description="Update details of an existing audit report and create a new version",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def update_existing_audit_report(
+    report_id: str = Path(..., description="Audit report UUID"),
+    update_data: AuditReportUpdate = Body(..., description="Fields to update"),
+    change_description: str = Body(..., description="Description of changes made", embed=True),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    update_dict = update_data.model_dump(exclude_unset=True)
+
+    updated_report = update_audit_report(report_id, update_dict)
+
+    if update_dict:
+        create_audit_report_version(
+            audit_report_id=report_id,
+            changed_by=str(current_user.id),
+            change_description=change_description,
+            change_type="draft_update",
+            report_snapshot=updated_report
+        )
+    
+    return updated_report
+
+@router_v1.put("/audit-reports/{report_id}/status",
+    summary="Update audit report status",
+    description="Change the status of an audit report (e.g., to 'finalized', 'approved')",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def update_audit_report_status(
+    report_id: str = Path(..., description="Audit report UUID"),
+    status_update: AuditReportStatusUpdate = Body(..., description="New status data"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    update_data = {"report_status": status_update.new_status}
+
+    if status_update.new_status == "approved":
+        update_data["approved_by"] = str(current_user.id)
+    elif status_update.new_status == "finalized":
+        update_data["report_finalized_at"] = datetime.now(timezone.utc).isoformat()
+    
+    updated_report = update_audit_report(report_id, update_data)
+
+    create_audit_report_version(
+        audit_report_id=report_id,
+        changed_by=str(current_user.id),
+        change_description=f"Status changed to {status_update.new_status}" + (f": {status_update.notes}" if status_update.notes else ""),
+        change_type="approval_change",
+        report_snapshot=updated_report
+    )
+    
+    return updated_report
+
+@router_v1.delete("/audit-reports/{report_id}",
+    summary="Delete audit report",
+    description="Delete (archive) an audit report",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def delete_existing_audit_report(
+    report_id: str = Path(..., description="Audit report UUID"),
+    hard_delete: bool = Query(False, description="If true, permanently delete (not recommended)"),
+    current_user: UserResponse = Depends(require_admin)
+) -> Dict[str, Any]:
+    return delete_audit_report(report_id, soft_delete=not hard_delete)
+
+@router_v1.post("/audit-reports/search",
+    summary="Search audit reports",
+    description="Advanced search for audit reports with multiple filters",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit Reports"],
+)
+def search_audit_reports(
+    search_request: AuditReportSearchRequest = Body(..., description="Search criteria"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return list_audit_reports(
+        skip=search_request.skip,
+        limit=search_request.limit,
+        compliance_domain=search_request.compliance_domain,
+        report_type=search_request.report_type,
+        report_status=search_request.report_status,
+        user_id=str(search_request.user_id) if search_request.user_id else None,
+        audit_session_id=str(search_request.audit_session_id) if search_request.audit_session_id else None,
+        target_audience=search_request.target_audience,
+        confidentiality_level=search_request.confidentiality_level,
+        generated_after=search_request.generated_after,
+        generated_before=search_request.generated_before
+    )
+
+@router_v1.get("/audit-reports/statistics",
+    summary="Get audit report statistics",
+    description="Get comprehensive statistics about audit reports",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def get_audit_report_statistics_endpoint(
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
+    user_id: Optional[str] = Query(None, description="Filter by user ID"),
+    start_date: Optional[datetime] = Query(None, description="Filter reports generated after this date"),
+    end_date: Optional[datetime] = Query(None, description="Filter reports generated before this date"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return get_audit_report_statistics(
+        compliance_domain=compliance_domain,
+        user_id=user_id,
+        start_date=start_date,
+        end_date=end_date
+    )
+
+@router_v1.get("/audit-reports/{report_id}/versions",
+    summary="List audit report versions",
+    description="Get all versions of a specific audit report",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit Reports"],
+)
+def get_audit_report_versions(
+    report_id: str = Path(..., description="Audit report UUID"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return list_audit_report_versions(report_id, skip, limit)
+
+@router_v1.get("/audit-reports/{report_id}/versions/latest",
+    summary="Get latest audit report version",
+    description="Get the most recent version of an audit report",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def get_latest_audit_report_version_endpoint(
+    report_id: str = Path(..., description="Audit report UUID"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return get_latest_audit_report_version(report_id)
+
+@router_v1.get("/audit-reports/{report_id}/versions/{version_number}",
+    summary="Get audit report version by number",
+    description="Get a specific version of an audit report",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def get_audit_report_version_by_number_endpoint(
+    report_id: str = Path(..., description="Audit report UUID"),
+    version_number: int = Path(..., description="Version number", ge=1),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return get_audit_report_version_by_number(report_id, version_number)
+
+@router_v1.get("/audit-reports/{report_id}/versions/compare/{version1}/{version2}",
+    summary="Compare audit report versions",
+    description="Compare two versions of an audit report",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def compare_audit_report_versions_endpoint(
+    report_id: str = Path(..., description="Audit report UUID"),
+    version1: int = Path(..., description="First version number", ge=1),
+    version2: int = Path(..., description="Second version number", ge=1),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return compare_audit_report_versions(report_id, version1, version2)
+
+@router_v1.post("/audit-reports/{report_id}/versions/{version_number}/restore",
+    summary="Restore audit report to previous version",
+    description="Restore an audit report to a previous version",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def restore_audit_report_version_endpoint(
+    report_id: str = Path(..., description="Audit report UUID"),
+    version_number: int = Path(..., description="Version number to restore to", ge=1),
+    restore_reason: str = Body(..., description="Reason for restoration", embed=True),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    return restore_audit_report_version(report_id, version_number, str(current_user.id), restore_reason)
+
+@router_v1.get("/audit-reports/{report_id}/versions/history",
+    summary="Get version history summary",
+    description="Get a summary of version history for an audit report",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def get_audit_report_version_history_summary(
+    report_id: str = Path(..., description="Audit report UUID"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return get_version_history_summary(report_id)
+
+@router_v1.get("/audit-reports/distributions",
+    summary="List all audit report distributions",
+    description="Get paginated audit report distributions with optional filtering",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit Reports"],
+)
+def get_all_audit_report_distributions(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    audit_report_id: Optional[str] = Query(None, description="Filter by audit report ID"),
+    distributed_to: Optional[str] = Query(None, description="Filter by recipient"),
+    distribution_method: Optional[str] = Query(None, description="Filter by distribution method"),
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return list_audit_report_distributions(
+        audit_report_id=audit_report_id,
+        distributed_to=distributed_to,
+        distribution_method=distribution_method,
+        is_active=is_active,
+        skip=skip,
+        limit=limit
+    )
+
+@router_v1.get("/audit-reports/{report_id}/distributions",
+    summary="Get distributions for specific report",
+    description="Get all distributions for a specific audit report",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit Reports"],
+)
+def get_audit_report_distributions(
+    report_id: str = Path(..., description="Audit report UUID"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return get_distributions_by_report_id(report_id)
+
+@router_v1.post("/audit-reports/{report_id}/distribute",
+    summary="Distribute audit report",
+    description="Create a new distribution for an audit report",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+    status_code=201
+)
+def distribute_audit_report(
+    report_id: str = Path(..., description="Audit report UUID"),
+    distribution_data: AuditReportDistributionCreate = Body(..., description="Distribution details"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    return create_audit_report_distribution(
+        audit_report_id=report_id,
+        distributed_to=distribution_data.distributed_to,
+        distribution_method=distribution_data.distribution_method,
+        distribution_format=distribution_data.distribution_format,
+        distributed_by=str(current_user.id),
+        external_reference=distribution_data.external_reference,
+        expiry_date=distribution_data.expiry_date
+    )
+
+@router_v1.post("/audit-reports/{report_id}/distribute/bulk",
+    summary="Bulk distribute audit report",
+    description="Distribute an audit report to multiple recipients",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit Reports"],
+    status_code=201
+)
+def bulk_distribute_audit_report(
+    report_id: str = Path(..., description="Audit report UUID"),
+    recipients: List[str] = Body(..., description="List of recipient emails"),
+    distribution_method: str = Body("email", description="Distribution method"),
+    distribution_format: str = Body("pdf", description="Distribution format"),
+    expiry_date: Optional[datetime] = Body(None, description="Expiry date for access"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> List[Dict[str, Any]]:
+    return bulk_distribute_report(
+        audit_report_id=report_id,
+        recipients=recipients,
+        distribution_method=distribution_method,
+        distribution_format=distribution_format,
+        distributed_by=str(current_user.id),
+        expiry_date=expiry_date
+    )
+
+@router_v1.post("/audit-report-distributions/{distribution_id}/access",
+    summary="Log distribution access",
+    description="Log access to a distributed audit report",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def log_audit_report_distribution_access(
+    request: Request,
+    distribution_id: str = Path(..., description="Distribution UUID"),
+    access_log: AuditReportAccessLogRequest = Body(..., description="Access log data")
+) -> Dict[str, Any]:
+    ip_address = access_log.access_ip_address or (request.client.host if request.client else None)
+    user_agent = access_log.user_agent or request.headers.get("user-agent")
+    
+    return log_distribution_access(
+        distribution_id=distribution_id,
+        access_ip_address=ip_address,
+        user_agent=user_agent
+    )
+
+@router_v1.put("/audit-report-distributions/{distribution_id}/deactivate",
+    summary="Deactivate distribution",
+    description="Deactivate (revoke access to) a distribution",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def deactivate_audit_report_distribution(
+    distribution_id: str = Path(..., description="Distribution UUID"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    return deactivate_distribution(distribution_id, str(current_user.id))
+
+@router_v1.put("/audit-report-distributions/{distribution_id}/reactivate",
+    summary="Reactivate distribution",
+    description="Reactivate a previously deactivated distribution",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def reactivate_audit_report_distribution(
+    distribution_id: str = Path(..., description="Distribution UUID"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    return reactivate_distribution(distribution_id, str(current_user.id))
+
+@router_v1.put("/audit-report-distributions/{distribution_id}/expiry",
+    summary="Update distribution expiry",
+    description="Update the expiry date of a distribution",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def update_audit_report_distribution_expiry(
+    distribution_id: str = Path(..., description="Distribution UUID"),
+    new_expiry_date: Optional[datetime] = Body(..., description="New expiry date (null for no expiry)", embed=True),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    return update_distribution_expiry(distribution_id, new_expiry_date, str(current_user.id))
+
+@router_v1.get("/audit-report-distributions/{distribution_id}",
+    summary="Get distribution by ID",
+    description="Get detailed information about a specific distribution",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def get_audit_report_distribution(
+    distribution_id: str = Path(..., description="Distribution UUID"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return get_audit_report_distribution_by_id(distribution_id)
+
+@router_v1.get("/audit-report-distributions/{distribution_id}/access-summary",
+    summary="Get distribution access summary",
+    description="Get access summary and analytics for a distribution",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def get_audit_report_distribution_access_summary(
+    distribution_id: str = Path(..., description="Distribution UUID"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return get_distribution_access_summary(distribution_id)
+
+@router_v1.delete("/audit-report-distributions/{distribution_id}",
+    summary="Delete distribution",
+    description="Permanently delete a distribution record",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def delete_audit_report_distribution(
+    distribution_id: str = Path(..., description="Distribution UUID"),
+    current_user: UserResponse = Depends(require_admin)
+) -> Dict[str, Any]:
+    return delete_distribution(distribution_id)
+
+@router_v1.get("/audit-report-distributions/statistics",
+    summary="Get distribution statistics",
+    description="Get comprehensive statistics about audit report distributions",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def get_audit_report_distribution_statistics(
+    audit_report_id: Optional[str] = Query(None, description="Filter by audit report ID"),
+    start_date: Optional[datetime] = Query(None, description="Filter distributions created after this date"),
+    end_date: Optional[datetime] = Query(None, description="Filter distributions created before this date"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return get_distribution_statistics(
+        audit_report_id=audit_report_id,
+        start_date=start_date,
+        end_date=end_date
+    )
+
+@router_v1.post("/audit-report-distributions/cleanup-expired",
+    summary="Cleanup expired distributions",
+    description="Automatically deactivate all expired distributions",
+    response_model=Dict[str, Any],
+    tags=["Audit Reports"],
+)
+def cleanup_expired_audit_report_distributions(
+    current_user: UserResponse = Depends(require_admin)
+) -> Dict[str, Any]:
+    return cleanup_expired_distributions()
+
 app.include_router(router_v1)
 
 if __name__ == "__main__":

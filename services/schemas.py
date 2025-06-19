@@ -518,3 +518,383 @@ class ComplianceGapFromChatHistoryRequest(BaseModel):
         if v not in valid_types:
             raise ValueError(f'recommendation_type must be one of: {", ".join(valid_types)}')
         return v
+
+class AuditReportCreate(BaseModel):
+    """Request model for creating a new audit report"""
+    user_id: UUID = Field(..., description="User who is generating the report")
+    audit_session_id: UUID = Field(..., description="Audit session this report covers")
+    compliance_domain: str = Field(..., description="Compliance domain code (e.g., GDPR, ISO27001)")
+    
+    report_title: str = Field(..., max_length=255, description="Title of the audit report")
+    report_type: str = Field("compliance_audit", description="Type of audit report")
+    
+    # Optional filters for report generation
+    chat_history_ids: Optional[List[int]] = Field(None, description="Specific chat interactions to include")
+    compliance_gap_ids: Optional[List[UUID]] = Field(None, description="Specific gaps to include")
+    document_ids: Optional[List[UUID]] = Field(None, description="Specific documents to reference")
+    pdf_ingestion_ids: Optional[List[UUID]] = Field(None, description="Specific PDF sources to include")
+    
+    # Report configuration
+    include_technical_details: bool = Field(False, description="Include technical details in report")
+    include_source_citations: bool = Field(True, description="Include source document citations")
+    include_confidence_scores: bool = Field(False, description="Include confidence scores")
+    target_audience: str = Field("compliance_team", description="Target audience for the report")
+    template_used: Optional[str] = Field(None, max_length=100, description="Report template identifier")
+    
+    # Distribution settings
+    confidentiality_level: str = Field("internal", description="Confidentiality classification")
+    external_auditor_access: bool = Field(False, description="Allow external auditor access")
+    
+    @validator('report_type')
+    def validate_report_type(cls, v):
+        valid_types = ['compliance_audit', 'gap_analysis', 'regulatory_review', 'external_audit', 'internal_review']
+        if v not in valid_types:
+            raise ValueError(f'report_type must be one of: {", ".join(valid_types)}')
+        return v
+    
+    @validator('target_audience')
+    def validate_target_audience(cls, v):
+        valid_audiences = ['executives', 'compliance_team', 'auditors', 'regulators', 'board']
+        if v not in valid_audiences:
+            raise ValueError(f'target_audience must be one of: {", ".join(valid_audiences)}')
+        return v
+    
+    @validator('confidentiality_level')
+    def validate_confidentiality_level(cls, v):
+        valid_levels = ['public', 'internal', 'confidential', 'restricted']
+        if v not in valid_levels:
+            raise ValueError(f'confidentiality_level must be one of: {", ".join(valid_levels)}')
+        return v
+
+class AuditReportUpdate(BaseModel):
+    """Request model for updating an audit report"""
+    report_title: Optional[str] = Field(None, max_length=255)
+    report_status: Optional[str] = None
+    executive_summary: Optional[str] = None
+    detailed_findings: Optional[Dict[str, Any]] = None
+    recommendations: Optional[List[Dict[str, Any]]] = None
+    action_items: Optional[List[Dict[str, Any]]] = None
+    appendices: Optional[Dict[str, Any]] = None
+    
+    # Workflow fields
+    reviewed_by: Optional[UUID] = None
+    approved_by: Optional[UUID] = None
+    external_audit_reference: Optional[str] = Field(None, max_length=100)
+    regulatory_submission_date: Optional[datetime] = None
+    regulatory_response_received: Optional[bool] = None
+    
+    # File metadata
+    report_file_path: Optional[str] = None
+    report_file_size: Optional[int] = None
+    report_hash: Optional[str] = Field(None, max_length=64)
+    export_formats: Optional[List[str]] = None
+    
+    # Comparison fields
+    previous_report_id: Optional[UUID] = None
+    improvement_from_previous: Optional[Decimal] = None
+    trending_direction: Optional[str] = None
+    benchmark_comparison: Optional[Dict[str, Any]] = None
+    
+    @validator('report_status')
+    def validate_report_status(cls, v):
+        if v is None:
+            return v
+        valid_statuses = ['draft', 'finalized', 'approved', 'distributed', 'archived']
+        if v not in valid_statuses:
+            raise ValueError(f'report_status must be one of: {", ".join(valid_statuses)}')
+        return v
+    
+    @validator('trending_direction')
+    def validate_trending_direction(cls, v):
+        if v is None:
+            return v
+        valid_directions = ['improving', 'stable', 'declining']
+        if v not in valid_directions:
+            raise ValueError(f'trending_direction must be one of: {", ".join(valid_directions)}')
+        return v
+
+class AuditReportResponse(BaseModel):
+    """Response model for audit report data"""
+    id: UUID
+    user_id: UUID
+    audit_session_id: UUID
+    compliance_domain: str
+    
+    report_title: str
+    report_type: str
+    report_status: str
+    
+    # Session data references
+    chat_history_ids: List[int] = Field(default_factory=list)
+    compliance_gap_ids: List[UUID] = Field(default_factory=list)
+    document_ids: List[UUID] = Field(default_factory=list)
+    pdf_ingestion_ids: List[UUID] = Field(default_factory=list)
+    
+    # Executive summary metrics
+    total_questions_asked: int = 0
+    questions_answered_satisfactorily: int = 0
+    total_gaps_identified: int = 0
+    critical_gaps_count: int = 0
+    high_risk_gaps_count: int = 0
+    medium_risk_gaps_count: int = 0
+    low_risk_gaps_count: int = 0
+    
+    # Compliance coverage analysis
+    requirements_total: Optional[int] = None
+    requirements_covered: Optional[int] = None
+    coverage_percentage: Optional[Decimal] = None
+    policy_documents_referenced: int = 0
+    unique_sources_count: int = 0
+    
+    # Performance metrics
+    session_duration_minutes: Optional[int] = None
+    avg_response_time_ms: Optional[int] = None
+    total_tokens_used: Optional[int] = None
+    total_similarity_searches: Optional[int] = None
+    
+    # Quality metrics
+    avg_confidence_score: Optional[Decimal] = None
+    low_confidence_answers_count: int = 0
+    contradictory_findings_count: int = 0
+    outdated_references_count: int = 0
+    
+    # Business impact
+    overall_compliance_rating: Optional[str] = None
+    estimated_remediation_cost: Optional[Decimal] = None
+    estimated_remediation_time_days: Optional[int] = None
+    regulatory_risk_score: Optional[int] = None
+    potential_fine_exposure: Optional[Decimal] = None
+    
+    # Report content
+    executive_summary: Optional[str] = None
+    detailed_findings: Dict[str, Any] = Field(default_factory=dict)
+    recommendations: List[Dict[str, Any]] = Field(default_factory=list)
+    action_items: List[Dict[str, Any]] = Field(default_factory=list)
+    appendices: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Generation settings
+    template_used: Optional[str] = None
+    include_technical_details: bool = False
+    include_source_citations: bool = True
+    include_confidence_scores: bool = False
+    target_audience: str = "compliance_team"
+    
+    # Workflow tracking
+    generated_by: Optional[UUID] = None
+    reviewed_by: Optional[UUID] = None
+    approved_by: Optional[UUID] = None
+    distributed_to: List[str] = Field(default_factory=list)
+    external_auditor_access: bool = False
+    confidentiality_level: str = "internal"
+    
+    # Regulatory tracking
+    audit_trail: List[Dict[str, Any]] = Field(default_factory=list)
+    external_audit_reference: Optional[str] = None
+    regulatory_submission_date: Optional[datetime] = None
+    regulatory_response_received: bool = False
+    
+    # File metadata
+    report_file_path: Optional[str] = None
+    report_file_size: Optional[int] = None
+    report_hash: Optional[str] = None
+    export_formats: List[str] = Field(default_factory=lambda: ['pdf'])
+    
+    # Comparison data
+    previous_report_id: Optional[UUID] = None
+    improvement_from_previous: Optional[Decimal] = None
+    trending_direction: Optional[str] = None
+    benchmark_comparison: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Integration
+    scheduled_followup_date: Optional[datetime] = None
+    auto_generated: bool = False
+    integration_exports: Dict[str, Any] = Field(default_factory=dict)
+    notification_sent: bool = False
+    
+    # Timestamps
+    report_generated_at: datetime
+    report_finalized_at: Optional[datetime] = None
+    last_modified_at: datetime
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class AuditReportVersionCreate(BaseModel):
+    """Request model for creating a new audit report version"""
+    change_description: str = Field(..., description="Description of changes made")
+    change_type: str = Field(..., description="Type of change being made")
+    
+    @validator('change_type')
+    def validate_change_type(cls, v):
+        valid_types = ['draft_update', 'review_feedback', 'approval_change', 'correction', 'regulatory_update']
+        if v not in valid_types:
+            raise ValueError(f'change_type must be one of: {", ".join(valid_types)}')
+        return v
+
+class AuditReportVersionResponse(BaseModel):
+    """Response model for audit report version"""
+    id: UUID
+    audit_report_id: UUID
+    version_number: int
+    change_description: Optional[str]
+    changed_by: Optional[UUID]
+    change_type: str
+    report_snapshot: Dict[str, Any]
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class AuditReportDistributionCreate(BaseModel):
+    """Request model for distributing an audit report"""
+    distributed_to: str = Field(..., max_length=255, description="Email or system identifier")
+    distribution_method: str = Field(..., description="Method of distribution")
+    distribution_format: str = Field(..., description="Format for distribution")
+    
+    external_reference: Optional[str] = Field(None, max_length=100, description="External system reference")
+    expiry_date: Optional[datetime] = Field(None, description="When access expires")
+    
+    @validator('distribution_method')
+    def validate_distribution_method(cls, v):
+        valid_methods = ['email', 'portal_download', 'api_export', 'grc_system', 'secure_link']
+        if v not in valid_methods:
+            raise ValueError(f'distribution_method must be one of: {", ".join(valid_methods)}')
+        return v
+    
+    @validator('distribution_format')
+    def validate_distribution_format(cls, v):
+        valid_formats = ['pdf', 'docx', 'html', 'json', 'csv']
+        if v not in valid_formats:
+            raise ValueError(f'distribution_format must be one of: {", ".join(valid_formats)}')
+        return v
+
+class AuditReportDistributionResponse(BaseModel):
+    """Response model for audit report distribution"""
+    id: UUID
+    audit_report_id: UUID
+    distributed_to: str
+    distribution_method: str
+    distribution_format: str
+    
+    # Access tracking
+    accessed_at: Optional[datetime] = None
+    download_count: int = 0
+    last_accessed_at: Optional[datetime] = None
+    access_ip_address: Optional[str] = None
+    
+    # Distribution metadata
+    external_reference: Optional[str] = None
+    expiry_date: Optional[datetime] = None
+    is_active: bool = True
+    
+    distributed_at: datetime
+    distributed_by: Optional[UUID] = None
+    
+    class Config:
+        from_attributes = True
+
+class AuditReportGenerateRequest(BaseModel):
+    """Request model for generating an audit report from an audit session"""
+    audit_session_id: UUID = Field(..., description="Audit session to generate report from")
+    report_title: str = Field(..., max_length=255, description="Title for the report")
+    report_type: str = Field("compliance_audit", description="Type of report to generate")
+    
+    # Generation options
+    include_all_conversations: bool = Field(True, description="Include all conversations from session")
+    include_identified_gaps: bool = Field(True, description="Include compliance gaps found")
+    include_document_references: bool = Field(True, description="Include document references")
+    generate_recommendations: bool = Field(True, description="Auto-generate recommendations")
+    
+    # Report configuration
+    include_technical_details: bool = Field(False, description="Include technical details")
+    include_source_citations: bool = Field(True, description="Include source citations")
+    include_confidence_scores: bool = Field(False, description="Include confidence scores")
+    target_audience: str = Field("compliance_team", description="Target audience")
+    
+    # Distribution settings
+    confidentiality_level: str = Field("internal", description="Confidentiality level")
+    auto_distribute: bool = Field(False, description="Auto-distribute to stakeholders")
+    distribution_list: Optional[List[str]] = Field(None, description="Email list for distribution")
+    
+    @validator('report_type')
+    def validate_report_type(cls, v):
+        valid_types = ['compliance_audit', 'gap_analysis', 'regulatory_review', 'external_audit', 'internal_review']
+        if v not in valid_types:
+            raise ValueError(f'report_type must be one of: {", ".join(valid_types)}')
+        return v
+
+class AuditReportStatusUpdate(BaseModel):
+    """Request model for updating audit report status"""
+    new_status: str = Field(..., description="New status for the report")
+    notes: Optional[str] = Field(None, description="Notes about the status change")
+    
+    @validator('new_status')
+    def validate_new_status(cls, v):
+        valid_statuses = ['draft', 'finalized', 'approved', 'distributed', 'archived']
+        if v not in valid_statuses:
+            raise ValueError(f'new_status must be one of: {", ".join(valid_statuses)}')
+        return v
+
+class AuditReportSearchRequest(BaseModel):
+    """Request model for searching audit reports"""
+    compliance_domain: Optional[str] = Field(None, description="Filter by compliance domain")
+    report_type: Optional[str] = Field(None, description="Filter by report type")
+    report_status: Optional[str] = Field(None, description="Filter by report status")
+    user_id: Optional[UUID] = Field(None, description="Filter by creator")
+    audit_session_id: Optional[UUID] = Field(None, description="Filter by audit session")
+    generated_after: Optional[datetime] = Field(None, description="Filter by generation date (after)")
+    generated_before: Optional[datetime] = Field(None, description="Filter by generation date (before)")
+    target_audience: Optional[str] = Field(None, description="Filter by target audience")
+    confidentiality_level: Optional[str] = Field(None, description="Filter by confidentiality level")
+    skip: int = Field(0, ge=0, description="Records to skip")
+    limit: int = Field(10, ge=1, le=100, description="Maximum records to return")
+
+class AuditReportStatisticsResponse(BaseModel):
+    """Response model for audit report statistics"""
+    total_reports: int
+    reports_by_status: Dict[str, int]
+    reports_by_type: Dict[str, int]
+    reports_by_domain: Dict[str, int]
+    reports_by_audience: Dict[str, int]
+    
+    # Quality metrics
+    avg_coverage_percentage: Optional[Decimal] = None
+    avg_gaps_per_report: Optional[Decimal] = None
+    avg_remediation_cost: Optional[Decimal] = None
+    
+    # Trend data
+    reports_this_month: int = 0
+    reports_last_month: int = 0
+    month_over_month_change: Optional[Decimal] = None
+    
+    # Distribution metrics
+    total_distributions: int = 0
+    avg_distributions_per_report: Optional[Decimal] = None
+    
+    filters_applied: Dict[str, Any] = Field(default_factory=dict)
+
+class AuditReportBulkActionRequest(BaseModel):
+    """Request model for bulk actions on audit reports"""
+    report_ids: List[UUID] = Field(..., description="List of report IDs")
+    action: str = Field(..., description="Action to perform")
+    
+    # Action-specific parameters
+    new_status: Optional[str] = Field(None, description="New status (for status updates)")
+    distribution_list: Optional[List[str]] = Field(None, description="Distribution list (for bulk distribution)")
+    distribution_format: Optional[str] = Field("pdf", description="Format for distribution")
+    archive_reason: Optional[str] = Field(None, description="Reason for archiving")
+    
+    @validator('action')
+    def validate_action(cls, v):
+        valid_actions = ['update_status', 'distribute', 'archive', 'export', 'delete']
+        if v not in valid_actions:
+            raise ValueError(f'action must be one of: {", ".join(valid_actions)}')
+        return v
+
+class AuditReportAccessLogRequest(BaseModel):
+    """Request model for logging report access"""
+    distribution_id: UUID = Field(..., description="Distribution ID being accessed")
+    access_ip_address: Optional[str] = Field(None, description="IP address of accessor")
+    user_agent: Optional[str] = Field(None, description="User agent string")
