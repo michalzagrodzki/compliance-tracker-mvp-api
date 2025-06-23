@@ -741,7 +741,7 @@ def search_audit_sessions_endpoint(
 @router_v1.post("/audit-sessions",
     summary="Create a new audit session",
     description="Creates a new audit session for compliance tracking. Returns the created session with generated ID and timestamps.",
-    response_model=AuditSessionResponse,
+    response_model=AuditSessionCreateResponse,
     tags=["Audit Sessions"],
     status_code=201
 )
