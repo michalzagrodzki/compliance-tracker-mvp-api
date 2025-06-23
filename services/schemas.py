@@ -117,10 +117,11 @@ class AuditSessionBase(BaseModel):
     compliance_domain: str = Field(..., description="Compliance domain (e.g., GDPR, ISO27001)")
 
 class AuditSessionCreate(AuditSessionBase):
-    user_id: str = Field(..., description="ID of the user creating the session")
-    ip_address: Optional[str] = Field(None, description="Client IP address")
-    user_agent: Optional[str] = Field(None, description="User agent string")
+    session_name: str = Field(..., description="Session name string")
+    compliance_domain: str = Field(..., description="Session name string")
 
+class AuditSessionCreateResponse(BaseModel):
+    id: UUID = Field(..., description="Unique session identifier")
 class AuditSessionUpdate(BaseModel):
     ended_at: Optional[datetime] = Field(None, description="Session end time")
     session_summary: Optional[str] = Field(None, description="Summary of the audit session")

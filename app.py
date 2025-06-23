@@ -17,6 +17,7 @@ from services.document import (
     get_documents_by_domain_and_version
 )
 from services.schemas import (
+    AuditSessionCreateResponse,
     ComplianceDomain,
     ComplianceGapCreate,
     ComplianceGapFromChatHistoryRequest,
@@ -745,15 +746,22 @@ def search_audit_sessions_endpoint(
     status_code=201
 )
 def create_new_audit_session(
-    session_data: AuditSessionCreate = Body(..., description="Audit session data")
-) -> AuditSessionResponse:
-    return create_audit_session(
-        user_id=session_data.user_id,
+    request: Request,
+    session_data: AuditSessionCreate = Body(..., description="Audit session data"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> AuditSessionCreateResponse:
+    ip_address = session_data.ip_address or request.client.host if request.client else None
+    user_agent = session_data.user_agent or request.headers.get("user-agent")
+    user_id = current_user.id
+    
+    created_session = create_audit_session(
+        user_id=user_id,
         session_name=session_data.session_name,
         compliance_domain=session_data.compliance_domain,
-        ip_address=session_data.ip_address,
-        user_agent=session_data.user_agent
+        ip_address=ip_address,
+        user_agent=user_agent
     )
+    return AuditSessionCreateResponse(id = created_session.id)
 
 @router_v1.patch("/audit-sessions/{session_id}",
     summary="Update an audit session",
