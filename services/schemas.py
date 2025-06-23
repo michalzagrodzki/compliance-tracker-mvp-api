@@ -938,3 +938,123 @@ class PdfIngestionStatisticsResponse(BaseModel):
     ingestions_by_user: Dict[str, int]
     ingestions_by_version: Dict[str, int]
     filters_applied: Dict[str, Any]
+
+class DocumentTagsRequest(BaseModel):
+    document_tags: List[str] = Field(..., description="List of tags to filter by")
+    tags_match_mode: Literal["any", "all", "exact"] = Field("any", description="How to match tags")
+    compliance_domain: Optional[str] = Field(None, description="Filter by compliance domain")
+    approval_status: Optional[str] = Field(None, description="Filter by approval status")
+    uploaded_by: Optional[str] = Field(None, description="Filter by uploader")
+    approved_by: Optional[str] = Field(None, description="Filter by approver")
+    skip: int = Field(0, ge=0, description="Records to skip")
+    limit: int = Field(50, ge=1, le=100, description="Maximum records to return")
+    
+    @validator('tags_match_mode')
+    def validate_match_mode(cls, v):
+        valid_modes = ["any", "all", "exact"]
+        if v not in valid_modes:
+            raise ValueError(f'tags_match_mode must be one of: {", ".join(valid_modes)}')
+        return v
+    
+    @validator('approval_status')
+    def validate_approval_status(cls, v):
+        if v is None:
+            return v
+        valid_statuses = ["pending", "approved", "rejected", "deprecated"]
+        if v not in valid_statuses:
+            raise ValueError(f'approval_status must be one of: {", ".join(valid_statuses)}')
+        return v
+    
+class DocumentTagConstants:    
+    DOCUMENT_TYPES = {
+        "reference_document": "ISO norms, GDPR regulations, standards",
+        "implementation_document": "SOPs, procedures, policies", 
+        "assessment_document": "audit reports, gap analyses",
+        "training_document": "training materials, guidelines",
+        "template_document": "document templates, forms"
+    }
+    
+    SOURCE_TYPES = {
+        "iso_standard": "ISO 27001, ISO 9001, etc.",
+        "regulatory_framework": "GDPR, SOX, HIPAA, etc.",
+        "internal_policy": "Company-specific policies",
+        "sop": "Standard Operating Procedures",
+        "procedure": "Detailed procedures", 
+        "guideline": "Implementation guidelines",
+        "checklist": "Compliance checklists"
+    }
+    
+    STATUS_TAGS = {
+        "current": "Currently valid documents",
+        "draft": "Draft versions", 
+        "archived": "Historical versions",
+        "superseded": "Replaced by newer versions"
+    }
+    
+    SCOPE_TAGS = {
+        "organizational": "Organization-wide applicability",
+        "departmental": "Department-specific",
+        "process_specific": "Specific to certain processes",
+        "role_specific": "For specific roles/positions"
+    }
+    
+    FORMAT_TAGS = {
+        "policy_document": "High-level policies",
+        "technical_specification": "Technical requirements",
+        "process_flow": "Process descriptions", 
+        "control_framework": "Control descriptions",
+        "risk_matrix": "Risk assessments"
+    }
+    
+    @classmethod
+    def get_all_valid_tags(cls) -> List[str]:
+        return (list(cls.DOCUMENT_TYPES.keys()) + list(cls.SOURCE_TYPES.keys()) + 
+                list(cls.STATUS_TAGS.keys()) + list(cls.SCOPE_TAGS.keys()) + list(cls.FORMAT_TAGS.keys()))
+    
+    @classmethod
+    def get_all_tags_with_descriptions(cls) -> Dict[str, str]:
+        all_tags = {}
+        all_tags.update(cls.DOCUMENT_TYPES)
+        all_tags.update(cls.SOURCE_TYPES)
+        all_tags.update(cls.STATUS_TAGS)
+        all_tags.update(cls.SCOPE_TAGS)
+        all_tags.update(cls.FORMAT_TAGS)
+        return all_tags
+    
+    @classmethod
+    def get_tags_by_category(cls) -> Dict[str, Dict[str, str]]:
+        return {
+            "document_types": cls.DOCUMENT_TYPES,
+            "source_types": cls.SOURCE_TYPES,
+            "status_tags": cls.STATUS_TAGS,
+            "scope_tags": cls.SCOPE_TAGS,
+            "format_tags": cls.FORMAT_TAGS
+        }
+    
+    @classmethod
+    def get_reference_document_tags(cls) -> List[str]:
+        return ["reference_document", "iso_standard", "regulatory_framework", "current"]
+    
+    @classmethod  
+    def get_implementation_document_tags(cls) -> List[str]:
+        return ["implementation_document", "sop", "procedure", "internal_policy", "current"]
+    
+    @classmethod
+    def get_tag_description(cls, tag: str) -> Optional[str]:
+        all_tags = cls.get_all_tags_with_descriptions()
+        return all_tags.get(tag)
+    
+    @classmethod
+    def get_category_for_tag(cls, tag: str) -> Optional[str]:
+        if tag in cls.DOCUMENT_TYPES:
+            return "document_types"
+        elif tag in cls.SOURCE_TYPES:
+            return "source_types"
+        elif tag in cls.STATUS_TAGS:
+            return "status_tags"
+        elif tag in cls.SCOPE_TAGS:
+            return "scope_tags"
+        elif tag in cls.FORMAT_TAGS:
+            return "format_tags"
+        else:
+            return None

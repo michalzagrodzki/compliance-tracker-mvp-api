@@ -10,6 +10,7 @@ from services.compliance_domain import get_compliance_domain_by_code, list_compl
 from services.compliance_gaps import assign_gap_to_user, create_compliance_gap, get_chat_history_by_id, get_compliance_gap_by_id, get_compliance_gaps_statistics, get_document_by_id, get_gaps_by_audit_session, get_gaps_by_domain, get_gaps_by_user, list_compliance_gaps, log_document_access, mark_gap_reviewed, update_compliance_gap, update_gap_status
 from services.db_check import check_database_connection
 from services.document import (
+    get_documents_by_tags,
     list_documents, 
     get_documents_by_source_filename,
     get_documents_by_compliance_domain, 
@@ -23,6 +24,8 @@ from services.schemas import (
     ComplianceGapFromChatHistoryRequest,
     ComplianceGapStatusUpdate,
     ComplianceGapUpdate,
+    DocumentTagConstants,
+    DocumentTagsRequest,
     PdfIngestionSearchRequest,
     QueryRequest, 
     QueryResponse, 
@@ -196,24 +199,52 @@ def get_me(current_user: UserResponse = Depends(get_current_user)):
     return current_user
 
 @router_v1.get("/documents",
-    summary="List documents with filtering and pagination",
-    description="Fetches paginated rows from the Supabase 'documents' table with optional filtering by compliance domain, version, and source filename.",
+    summary="List documents with enhanced filtering including tags",
+    description="Fetches paginated documents with comprehensive filtering by tags, compliance domain, version, etc.",
     response_model=List[Dict[str, Any]],
     tags=["Documents"],
 )
 def get_all_documents(
     skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
-    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain (e.g., 'GDPR', 'ISO27001')"),
-    document_version: Optional[str] = Query(None, description="Filter by document version (e.g., 'v1.2', '2024-Q1')"),
-    source_filename: Optional[str] = Query(None, description="Filter by source filename (exact match or partial)")
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
+    document_version: Optional[str] = Query(None, description="Filter by document version"),
+    source_filename: Optional[str] = Query(None, description="Filter by source filename (partial match)"),
+    document_tags: Optional[List[str]] = Query(None, description="Filter by document tags"),
+    tags_match_mode: str = Query("any", description="Tag matching mode: 'any', 'all', or 'exact'"),
+    approval_status: Optional[str] = Query(None, description="Filter by approval status"),
+    uploaded_by: Optional[str] = Query(None, description="Filter by uploader user ID"),
+    approved_by: Optional[str] = Query(None, description="Filter by approver user ID")
 ) -> Any:
     return list_documents(
         skip=skip, 
         limit=limit, 
         compliance_domain=compliance_domain,
         document_version=document_version,
-        source_filename=source_filename
+        source_filename=source_filename,
+        document_tags=document_tags,
+        tags_match_mode=tags_match_mode,
+        approval_status=approval_status,
+        uploaded_by=uploaded_by,
+        approved_by=approved_by
+    )
+
+@router_v1.get("/documents/by-tags",
+    summary="Get documents filtered by specific tags",
+    description="Retrieve documents that match specified tags with flexible matching modes",
+    response_model=List[Dict[str, Any]],
+    tags=["Documents"],
+)
+def get_documents_by_tags_endpoint(
+    request: DocumentTagsRequest,
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return get_documents_by_tags(
+        tags=request.document_tags,
+        match_mode=request.tags_match_mode,
+        compliance_domain=request.compliance_domain,
+        skip=request.skip,
+        limit=request.limit
     )
 
 @router_v1.get("/documents/by-source/{source_filename}",
@@ -239,7 +270,6 @@ def get_documents_by_domain(
 ) -> Any:
     return get_documents_by_compliance_domain(compliance_domain, skip, limit)
 
-
 @router_v1.get("/documents/by-version/{document_version}",
     summary="Get documents by version",
     description="Fetches all documents with a specific version identifier.",
@@ -253,6 +283,26 @@ def get_documents_by_version(
 ) -> Any:
     return get_documents_by_version(document_version, skip, limit)
 
+@router_v1.get("/documents/tags/{tag}/documents",
+    summary="Get all documents with a specific tag",
+    description="Retrieve all documents that have been tagged with a specific tag",
+    response_model=List[Dict[str, Any]],
+    tags=["Documents"],
+)
+def get_documents_with_tag(
+    tag: str = Path(..., description="Tag to search for"),
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return get_documents_by_tags(
+        tags=[tag],
+        match_mode="any",
+        compliance_domain=compliance_domain,
+        skip=skip,
+        limit=limit
+    )
 
 @router_v1.get("/documents/by-domain-version/{compliance_domain}/{document_version}",
     summary="Get documents by domain and version",
@@ -267,6 +317,39 @@ def get_documents_by_domain_version(
     limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return")
 ) -> Any:
     return get_documents_by_domain_and_version(compliance_domain, document_version, skip, limit)
+
+@router_v1.get("/documents/tags/constants",
+    summary="Get predefined tag constants with descriptions",
+    description="Retrieve the predefined tag categories, values, and descriptions for consistent tagging",
+    response_model=Dict[str, Any],
+    tags=["Documents"],
+)
+def get_tag_constants_endpoint() -> Dict[str, Any]:
+    return {
+        "tag_categories": DocumentTagConstants.get_tags_by_category(),
+        "all_tags_with_descriptions": DocumentTagConstants.get_all_tags_with_descriptions(),
+        "all_valid_tags": DocumentTagConstants.get_all_valid_tags(),
+        "reference_document_tags": DocumentTagConstants.get_reference_document_tags(),
+        "implementation_document_tags": DocumentTagConstants.get_implementation_document_tags(),
+        "usage_examples": {
+            "reference_documents": {
+                "tags": ["reference_document", "iso_standard", "current"],
+                "description": "Use for ISO standards, regulations, and baseline documents"
+            },
+            "implementation_documents": {
+                "tags": ["implementation_document", "sop", "current"],
+                "description": "Use for SOPs, procedures, and internal policies"
+            },
+            "draft_procedures": {
+                "tags": ["implementation_document", "procedure", "draft"],
+                "description": "Use for procedures still in development"
+            },
+            "archived_policies": {
+                "tags": ["implementation_document", "internal_policy", "archived"],
+                "description": "Use for historical versions of policies"
+            }
+        }
+    }
 
 @router_v1.post("/query",
     response_model=QueryResponse,
