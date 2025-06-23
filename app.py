@@ -23,6 +23,7 @@ from services.schemas import (
     ComplianceGapFromChatHistoryRequest,
     ComplianceGapStatusUpdate,
     ComplianceGapUpdate,
+    PdfIngestionSearchRequest,
     QueryRequest, 
     QueryResponse, 
     ChatHistoryItem, 
@@ -33,7 +34,7 @@ from services.schemas import (
     AuditSessionSearchRequest
 )
 from services.history import get_history
-from services.ingestion import ingest_pdf_sync
+from services.ingestion import delete_pdf_ingestion, get_pdf_ingestion_by_id, get_pdf_ingestions_by_compliance_domain, get_pdf_ingestions_by_user, get_pdf_ingestions_by_version, ingest_pdf_sync, list_pdf_ingestions, search_pdf_ingestions
 from services.qa import answer_question
 from typing import Any, List, Dict, Optional, Union
 import logging
@@ -549,7 +550,7 @@ def read_user_history(
         skip=skip
     )
 
-@router_v1.post("/upload",
+@router_v1.post("/ingestions/upload",
     response_model=UploadResponse,
     summary="Upload a PDF document with compliance metadata",
     description="Ingests a PDF, splits into chunks, stores embeddings in Supabase with compliance domain tracking",
@@ -626,6 +627,114 @@ def upload_pdf(
         # Clean up file handle
         if hasattr(file.file, 'close'):
             file.file.close()
+
+@router_v1.get("/ingestions",
+    summary="List all PDF ingestions with pagination",
+    description="Get paginated list of all PDF ingestion records, ordered by ingestion date (newest first)",
+    response_model=List[Dict[str, Any]],
+    tags=["Ingestion"],
+)
+def get_all_pdf_ingestions(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return list_pdf_ingestions(skip=skip, limit=limit)
+
+@router_v1.get("/ingestions/{ingestion_id}",
+    summary="Get PDF ingestion by ID",
+    description="Get detailed information about a specific PDF ingestion record",
+    response_model=Dict[str, Any],
+    tags=["Ingestion"],
+)
+def get_pdf_ingestion(
+    ingestion_id: str = Path(..., description="PDF ingestion UUID"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return get_pdf_ingestion_by_id(ingestion_id)
+
+@router_v1.get("/ingestions/compliance-domain/{compliance_domain}",
+    summary="Get PDF ingestions by compliance domain",
+    description="Get all PDF ingestions for a specific compliance domain (e.g., GDPR, ISO27001)",
+    response_model=List[Dict[str, Any]],
+    tags=["Ingestion"],
+)
+def get_pdf_ingestions_by_domain(
+    compliance_domain: str = Path(..., description="Compliance domain code"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return get_pdf_ingestions_by_compliance_domain(
+        compliance_domain=compliance_domain, skip=skip, limit=limit
+    )
+
+@router_v1.get("/ingestions/user/{user_id}",
+    summary="Get PDF ingestions by user",
+    description="Get all PDF ingestions uploaded by a specific user",
+    response_model=List[Dict[str, Any]],
+    tags=["Ingestion"],
+)
+def get_pdf_ingestions_by_user_endpoint(
+    user_id: str = Path(..., description="User UUID"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return get_pdf_ingestions_by_user(user_id=user_id, skip=skip, limit=limit)
+
+@router_v1.get("/ingestions/version/{document_version}",
+    summary="Get PDF ingestions by document version",
+    description="Get PDF ingestions with a specific document version. Supports partial matching.",
+    response_model=List[Dict[str, Any]],
+    tags=["Ingestion"],
+)
+def get_pdf_ingestions_by_version_endpoint(
+    document_version: str = Path(..., description="Document version (supports partial matching)"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    exact_match: bool = Query(False, description="If true, performs exact version matching"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return get_pdf_ingestions_by_version(
+        document_version=document_version, 
+        skip=skip, 
+        limit=limit, 
+        exact_match=exact_match
+    )
+@router_v1.post("/ingestions/search",
+    summary="Search PDF ingestions with multiple filters",
+    description="Advanced search for PDF ingestions with optional filters for domain, user, version, status, filename, and dates",
+    response_model=List[Dict[str, Any]],
+    tags=["Ingestion"],
+)
+def search_pdf_ingestions_endpoint(
+    search_request: PdfIngestionSearchRequest,
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    return search_pdf_ingestions(
+        compliance_domain=search_request.compliance_domain,
+        uploaded_by=search_request.uploaded_by,
+        document_version=search_request.document_version,
+        processing_status=search_request.processing_status,
+        filename_search=search_request.filename_search,
+        ingested_after=search_request.ingested_after,
+        ingested_before=search_request.ingested_before,
+        skip=search_request.skip,
+        limit=search_request.limit
+    )
+@router_v1.delete("/ingestions/{ingestion_id}",
+    summary="Delete PDF ingestion record",
+    description="Delete a PDF ingestion record. Soft delete changes status to 'deleted', hard delete removes the record permanently.",
+    response_model=Dict[str, Any],
+    tags=["Ingestion"],
+)
+def delete_pdf_ingestion_endpoint(
+    ingestion_id: str = Path(..., description="PDF ingestion UUID"),
+    hard_delete: bool = Query(False, description="If true, permanently delete the record (not recommended for audit trail)"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    return delete_pdf_ingestion(ingestion_id=ingestion_id, soft_delete=not hard_delete)
 
 @router_v1.get("/compliance-domains",
     summary="List compliance domains with pagination",
@@ -750,8 +859,8 @@ def create_new_audit_session(
     session_data: AuditSessionCreate = Body(..., description="Audit session data"),
     current_user: UserResponse = Depends(get_current_active_user)
 ) -> AuditSessionCreateResponse:
-    ip_address = session_data.ip_address or request.client.host if request.client else None
-    user_agent = session_data.user_agent or request.headers.get("user-agent")
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
     user_id = current_user.id
     
     created_session = create_audit_session(
@@ -761,7 +870,7 @@ def create_new_audit_session(
         ip_address=ip_address,
         user_agent=user_agent
     )
-    return AuditSessionCreateResponse(id = created_session.id)
+    return AuditSessionCreateResponse(id=created_session["id"])
 
 @router_v1.patch("/audit-sessions/{session_id}",
     summary="Update an audit session",

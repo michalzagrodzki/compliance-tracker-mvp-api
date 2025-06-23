@@ -899,3 +899,42 @@ class AuditReportAccessLogRequest(BaseModel):
     distribution_id: UUID = Field(..., description="Distribution ID being accessed")
     access_ip_address: Optional[str] = Field(None, description="IP address of accessor")
     user_agent: Optional[str] = Field(None, description="User agent string")
+
+class PdfIngestionSearchRequest(BaseModel):
+    compliance_domain: Optional[str] = Field(None, description="Filter by compliance domain")
+    uploaded_by: Optional[str] = Field(None, description="Filter by user ID who uploaded")
+    document_version: Optional[str] = Field(None, description="Filter by document version (partial match)")
+    processing_status: Optional[str] = Field(None, description="Filter by processing status")
+    filename_search: Optional[str] = Field(None, description="Search in filename (partial match)")
+    ingested_after: Optional[datetime] = Field(None, description="Filter ingestions after this date")
+    ingested_before: Optional[datetime] = Field(None, description="Filter ingestions before this date")
+    skip: int = Field(0, ge=0, description="Number of records to skip")
+    limit: int = Field(10, ge=1, le=100, description="Maximum number of records to return")
+
+class PdfIngestionResponse(BaseModel):
+    id: str
+    filename: str
+    compliance_domain: Optional[str]
+    document_version: Optional[str]
+    uploaded_by: Optional[str]
+    file_size: Optional[int]
+    file_hash: Optional[str]
+    processing_status: str
+    total_chunks: Optional[int]
+    error_message: Optional[str]
+    ingested_at: datetime
+    metadata: Optional[Dict[str, Any]] = None
+
+class PdfIngestionStatisticsResponse(BaseModel):
+    total_ingestions: int
+    completed_ingestions: int
+    failed_ingestions: int
+    processing_ingestions: int
+    success_rate: float
+    total_chunks_created: int
+    total_file_size_bytes: int
+    avg_chunks_per_document: float
+    ingestions_by_domain: Dict[str, int]
+    ingestions_by_user: Dict[str, int]
+    ingestions_by_version: Dict[str, int]
+    filters_applied: Dict[str, Any]
