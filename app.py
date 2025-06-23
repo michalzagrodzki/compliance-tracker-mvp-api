@@ -27,6 +27,7 @@ from services.schemas import (
     DocumentTagConstants,
     DocumentTagsRequest,
     PdfIngestionSearchRequest,
+    PdfIngestionWithTagsRequest,
     QueryRequest, 
     QueryResponse, 
     ChatHistoryItem, 
@@ -324,7 +325,9 @@ def get_documents_by_domain_version(
     response_model=Dict[str, Any],
     tags=["Documents"],
 )
-def get_tag_constants_endpoint() -> Dict[str, Any]:
+def get_tag_constants_endpoint(
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
     return {
         "tag_categories": DocumentTagConstants.get_tags_by_category(),
         "all_tags_with_descriptions": DocumentTagConstants.get_all_tags_with_descriptions(),
@@ -635,21 +638,22 @@ def read_user_history(
 
 @router_v1.post("/ingestions/upload",
     response_model=UploadResponse,
-    summary="Upload a PDF document with compliance metadata",
-    description="Ingests a PDF, splits into chunks, stores embeddings in Supabase with compliance domain tracking",
+    summary="Upload a PDF document with compliance metadata and tags",
+    description="Ingests a PDF, splits into chunks, stores embeddings in Supabase with compliance domain and tag tracking",
     tags=["Ingestion"],
 )
 def upload_pdf(
     file: UploadFile = File(...),
     compliance_domain: Optional[str] = Form(None, description="Compliance domain (e.g., 'GDPR', 'ISO_27001', 'SOX')"),
     document_version: Optional[str] = Form(None, description="Document version (e.g., 'v1.0', '2024-Q1')"),
-    uploaded_by: Optional[str] = Form(None, description="User ID who uploaded the document")
+    uploaded_by: Optional[str] = Form(None, description="User ID who uploaded the document"),
+    document_tags: Optional[str] = Form(None, description="Comma-separated list of document tags (e.g., 'policy,current,iso_27001')")
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     if compliance_domain:
-        allowed_domains = ["ISO_27001"]
+        allowed_domains = ["ISO_27001", "GDPR", "SOX", "HIPAA", "PCI_DSS"]
         if compliance_domain not in allowed_domains:
             logging.warning(f"Unknown compliance domain: {compliance_domain}")
 
@@ -658,6 +662,16 @@ def upload_pdf(
             uuid.UUID(uploaded_by)
         except ValueError:
             raise HTTPException(status_code=400, detail="uploaded_by must be a valid UUID")
+
+    parsed_tags = []
+    if document_tags:
+        parsed_tags = [tag.strip() for tag in document_tags.split(",") if tag.strip()]
+
+        valid_tags = DocumentTagConstants.get_all_valid_tags()
+        invalid_tags = [tag for tag in parsed_tags if tag not in valid_tags]
+        
+        if invalid_tags:
+            logging.warning(f"Invalid tags provided: {invalid_tags}")
         
     try:
         contents = file.file.read()
@@ -687,7 +701,8 @@ def upload_pdf(
             file_path=file_path,
             compliance_domain=compliance_domain,
             document_version=document_version,
-            uploaded_by=uploaded_by
+            uploaded_by=uploaded_by,
+            document_tags=parsed_tags
         )
         
         return UploadResponse(
@@ -695,7 +710,8 @@ def upload_pdf(
             inserted_count=chunk_count,
             ingestion_id=ingestion_id,
             compliance_domain=compliance_domain,
-            document_version=document_version
+            document_version=document_version,
+            document_tags=parsed_tags
         )
         
     except HTTPException:
@@ -707,7 +723,6 @@ def upload_pdf(
             detail=f"Upload failed: {str(e)}"
         )
     finally:
-        # Clean up file handle
         if hasattr(file.file, 'close'):
             file.file.close()
 
@@ -785,9 +800,10 @@ def get_pdf_ingestions_by_version_endpoint(
         limit=limit, 
         exact_match=exact_match
     )
-@router_v1.post("/ingestions/search",
-    summary="Search PDF ingestions with multiple filters",
-    description="Advanced search for PDF ingestions with optional filters for domain, user, version, status, filename, and dates",
+
+@router_v1.get("/ingestions/search",
+    summary="Search PDF ingestions with multiple filters including tags",
+    description="Advanced search for PDF ingestions with optional filters for domain, user, version, status, filename, dates, and tags",
     response_model=List[Dict[str, Any]],
     tags=["Ingestion"],
 )
@@ -803,9 +819,12 @@ def search_pdf_ingestions_endpoint(
         filename_search=search_request.filename_search,
         ingested_after=search_request.ingested_after,
         ingested_before=search_request.ingested_before,
+        document_tags=search_request.document_tags,
+        tags_match_mode=search_request.tags_match_mode,
         skip=search_request.skip,
         limit=search_request.limit
     )
+
 @router_v1.delete("/ingestions/{ingestion_id}",
     summary="Delete PDF ingestion record",
     description="Delete a PDF ingestion record. Soft delete changes status to 'deleted', hard delete removes the record permanently.",
@@ -818,6 +837,41 @@ def delete_pdf_ingestion_endpoint(
     current_user: UserResponse = Depends(require_compliance_officer_or_admin)
 ) -> Dict[str, Any]:
     return delete_pdf_ingestion(ingestion_id=ingestion_id, soft_delete=not hard_delete)
+
+@router_v1.get("/ingestions/tags/constants",
+    summary="Get predefined tag constants for PDF ingestions",
+    description="Retrieve the predefined tag categories, values, and descriptions for consistent PDF ingestion tagging",
+    response_model=Dict[str, Any],
+    tags=["Ingestion"],
+)
+def get_tag_constants_endpoint(
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    return {
+        "tag_categories": DocumentTagConstants.get_tags_by_category(),
+        "all_tags_with_descriptions": DocumentTagConstants.get_all_tags_with_descriptions(),
+        "all_valid_tags": DocumentTagConstants.get_all_valid_tags(),
+        "reference_document_tags": DocumentTagConstants.get_reference_document_tags(),
+        "implementation_document_tags": DocumentTagConstants.get_implementation_document_tags(),
+        "usage_examples": {
+            "reference_documents": {
+                "tags": ["reference_document", "iso_standard", "current"],
+                "description": "Use for ISO standards, regulations, and baseline documents"
+            },
+            "implementation_documents": {
+                "tags": ["implementation_document", "sop", "current"],
+                "description": "Use for SOPs, procedures, and internal policies"
+            },
+            "draft_procedures": {
+                "tags": ["implementation_document", "procedure", "draft"],
+                "description": "Use for procedures still in development"
+            },
+            "archived_policies": {
+                "tags": ["implementation_document", "internal_policy", "archived"],
+                "description": "Use for historical versions of policies"
+            }
+        }
+    }
 
 @router_v1.get("/compliance-domains",
     summary="List compliance domains with pagination",

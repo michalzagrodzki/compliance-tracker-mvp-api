@@ -287,13 +287,16 @@ def search_pdf_ingestions(
     filename_search: Optional[str] = None,
     ingested_after: Optional[datetime] = None,
     ingested_before: Optional[datetime] = None,
+    document_tags: Optional[List[str]] = None,
+    tags_match_mode: str = "any",
     skip: int = 0,
     limit: int = 10
 ) -> List[Dict[str, Any]]:
     try:
         logger.info(f"Searching PDF ingestions with filters: domain={compliance_domain}, "
                    f"user={uploaded_by}, version={document_version}, status={processing_status}, "
-                   f"filename={filename_search}, after={ingested_after}, before={ingested_before}")
+                   f"filename={filename_search}, after={ingested_after}, before={ingested_before}, "
+                   f"tags={document_tags}, tags_match_mode={tags_match_mode}")
         
         query = supabase.table(settings.supabase_table_pdf_ingestion).select("*")
         
@@ -317,6 +320,14 @@ def search_pdf_ingestions(
         
         if ingested_before is not None:
             query = query.lte("ingested_at", ingested_before.isoformat())
+
+        if document_tags:
+            if tags_match_mode == "any":
+                query = query.overlaps("document_tags", document_tags)
+            elif tags_match_mode == "all":
+                query = query.contains("document_tags", document_tags)
+            elif tags_match_mode == "exact":
+                query = query.eq("document_tags", document_tags)
         
         resp = (
             query

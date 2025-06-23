@@ -10,6 +10,7 @@ class UploadResponse(BaseModel):
     ingestion_id: str = Field(description="UUID of the ingestion record")
     compliance_domain: Optional[str] = Field(None, description="Compliance domain assigned to the document")
     document_version: Optional[str] = Field(None, description="Document version")
+    document_tags: Optional[List[str]] = Field(None, description="Document tags assigned")
 
 class QueryRequest(BaseModel):
     question: str
@@ -908,9 +909,44 @@ class PdfIngestionSearchRequest(BaseModel):
     filename_search: Optional[str] = Field(None, description="Search in filename (partial match)")
     ingested_after: Optional[datetime] = Field(None, description="Filter ingestions after this date")
     ingested_before: Optional[datetime] = Field(None, description="Filter ingestions before this date")
+    document_tags: Optional[List[str]] = Field(None, description="Filter by document tags")
+    tags_match_mode: str = Field("any", description="Tag matching mode: 'any', 'all', or 'exact'")
     skip: int = Field(0, ge=0, description="Number of records to skip")
     limit: int = Field(10, ge=1, le=100, description="Maximum number of records to return")
+    
+    @validator('tags_match_mode')
+    def validate_match_mode(cls, v):
+        valid_modes = ["any", "all", "exact"]
+        if v not in valid_modes:
+            raise ValueError(f'tags_match_mode must be one of: {", ".join(valid_modes)}')
+        return v
 
+class PdfIngestionWithTagsRequest(BaseModel):
+    """Request model for filtering PDF ingestions by tags"""
+    document_tags: List[str] = Field(..., description="List of tags to filter by")
+    tags_match_mode: Literal["any", "all", "exact"] = Field("any", description="How to match tags")
+    compliance_domain: Optional[str] = Field(None, description="Filter by compliance domain")
+    uploaded_by: Optional[str] = Field(None, description="Filter by uploader")
+    processing_status: Optional[str] = Field(None, description="Filter by processing status")
+    skip: int = Field(0, ge=0, description="Records to skip")
+    limit: int = Field(50, ge=1, le=100, description="Maximum records to return")
+    
+    @validator('tags_match_mode')
+    def validate_match_mode(cls, v):
+        valid_modes = ["any", "all", "exact"]
+        if v not in valid_modes:
+            raise ValueError(f'tags_match_mode must be one of: {", ".join(valid_modes)}')
+        return v
+    
+    @validator('processing_status')
+    def validate_processing_status(cls, v):
+        if v is None:
+            return v
+        valid_statuses = ["processing", "completed", "failed", "deleted"]
+        if v not in valid_statuses:
+            raise ValueError(f'processing_status must be one of: {", ".join(valid_statuses)}')
+        return v
+    
 class PdfIngestionResponse(BaseModel):
     id: str
     filename: str
