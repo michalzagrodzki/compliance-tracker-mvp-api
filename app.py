@@ -647,11 +647,12 @@ def upload_pdf(
     compliance_domain: Optional[str] = Form(None, description="Compliance domain (e.g., 'GDPR', 'ISO_27001', 'SOX')"),
     document_version: Optional[str] = Form(None, description="Document version (e.g., 'v1.0', '2024-Q1')"),
     document_tags: Optional[str] = Form(None, description="Comma-separated list of document tags (e.g., 'policy,current,iso_27001')"),
+    document_title: Optional[str] = Form(None, description="Document title (overrides PDF metadata)"),
+    document_author: Optional[str] = Form(None, description="Document author (overrides PDF metadata)"),
     current_user: UserResponse = Depends(get_current_active_user)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
-
     if compliance_domain:
         allowed_domains = ["ISO_27001", "GDPR", "SOX", "HIPAA", "PCI_DSS"]
         if compliance_domain not in allowed_domains:
@@ -696,7 +697,9 @@ def upload_pdf(
             compliance_domain=compliance_domain,
             document_version=document_version,
             uploaded_by=current_user.id,
-            document_tags=parsed_tags
+            document_tags=parsed_tags,
+            document_author=document_author,
+            document_title=document_title
         )
         
         return UploadResponse(

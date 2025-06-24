@@ -38,7 +38,9 @@ def ingest_pdf_sync(
     compliance_domain: Optional[str] = None,
     document_version: Optional[str] = None,
     uploaded_by: Optional[str] = None,
-    document_tags: Optional[List[str]] = None
+    document_tags: Optional[List[str]] = None,
+    document_title: Optional[str] = None,
+    document_author: Optional[str] = None
 ) -> tuple[int, str]:
     
     filename = os.path.basename(file_path)
@@ -54,12 +56,13 @@ def ingest_pdf_sync(
                    f"(domain: {existing_file.get('compliance_domain', 'N/A')}, "
                    f"version: {existing_file.get('document_version', 'N/A')})"
         )
-
+    
     initial_metadata = {
         "original_filename": filename,
         "file_size_bytes": file_size,
         "processing_started_at": datetime.now(timezone.utc).isoformat(),
-        "document_tags": document_tags or []
+        "document_tags": document_tags or [],
+        "uploaded_by": uploaded_by
     }
 
     try:
@@ -104,7 +107,10 @@ def ingest_pdf_sync(
                 "filename": filename,
                 "ingestion_id": ingestion_id,
                 "file_hash": file_hash,
-                "document_tags": document_tags or []
+                "document_tags": document_tags or [],
+                "uploaded_by": uploaded_by,
+                "title": document_title,
+                "author": document_author,
             })
         
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
@@ -120,7 +126,8 @@ def ingest_pdf_sync(
             "pages": len(pages),
             "processing_completed_at": datetime.now(timezone.utc).isoformat(),
             "chunk_size": 1000,
-            "chunk_overlap": 200
+            "chunk_overlap": 200,
+            "uploaded_by": uploaded_by,
         }
         
         update_resp = supabase.table(settings.supabase_table_pdf_ingestion).update({

@@ -1,18 +1,15 @@
+from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_openai import OpenAIEmbeddings
 from langchain.schema import Document
 from config.config import settings
 from db.supabase_client import create_supabase_client
 from typing import List, Optional, Dict, Any
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
-class ComplianceSupabaseVectorStore:
-    def __init__(self, client, embedding, table_name):
-        self._client = client
-        self._embedding = embedding
-        self.table_name = table_name
-    
+class ComplianceSupabaseVectorStore(SupabaseVectorStore):
     def add_documents(self, documents: List[Document], **kwargs) -> List[str]:
         texts = [doc.page_content for doc in documents]
         metadatas = [doc.metadata for doc in documents]
@@ -27,8 +24,9 @@ class ComplianceSupabaseVectorStore:
     ) -> List[str]:
         if not metadatas:
             metadatas = [{}] * len(texts)
-        embeddings = self._embedding.embed_documents(texts)
 
+        embeddings = self._embedding.embed_documents(texts)
+        
         records = []
         for i, (text, metadata, embedding) in enumerate(zip(texts, metadatas, embeddings)):
             compliance_data = self._extract_compliance_data(metadata, i)
@@ -56,6 +54,7 @@ class ComplianceSupabaseVectorStore:
             if hasattr(resp, "error") and resp.error:
                 logger.error("Failed to insert documents into vector store", exc_info=True)
                 raise Exception(f"Vector store insertion failed: {resp.error.message}")
+
             inserted_ids = [str(record["id"]) for record in resp.data]
             logger.info(f"Successfully inserted {len(inserted_ids)} documents into vector store")
             
@@ -79,17 +78,32 @@ class ComplianceSupabaseVectorStore:
                         page_number = int(page_match.group(1))
             except:
                 pass
-        
+
+        def safe_uuid_convert(value):
+            if value is None:
+                return None
+            if isinstance(value, uuid.UUID):
+                return value
+            if isinstance(value, str):
+                try:
+                    return uuid.UUID(value)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid UUID format: {value}")
+                    return None
+            return None
+
         return {
             "compliance_domain": metadata.get("compliance_domain"),
             "document_version": metadata.get("document_version"),
             "document_tags": metadata.get("document_tags", []),
             "uploaded_by": metadata.get("uploaded_by"),
             "approved_by": metadata.get("approved_by"),
-            "approval_status": metadata.get("approval_status", "pending"),
+            "approval_status": metadata.get("approval_status", "approved"),
             "source_filename": metadata.get("filename") or metadata.get("source_filename"),
             "source_page_number": page_number,
-            "chunk_index": chunk_index
+            "chunk_index": chunk_index,
+            "document_title": metadata.get("title"),
+            "document_author": metadata.get("author") 
         }
 
 supabase = create_supabase_client()
