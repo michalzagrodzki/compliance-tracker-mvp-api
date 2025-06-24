@@ -62,7 +62,9 @@ def ingest_pdf_sync(
         "file_size_bytes": file_size,
         "processing_started_at": datetime.now(timezone.utc).isoformat(),
         "document_tags": document_tags or [],
-        "uploaded_by": uploaded_by
+        "uploaded_by": uploaded_by,
+        "title": document_title,
+        "author": document_author,
     }
 
     try:
