@@ -37,14 +37,14 @@ def ingest_pdf_sync(
     file_path: str,
     compliance_domain: Optional[str] = None,
     document_version: Optional[str] = None,
-    uploaded_by: Optional[str] = None
+    uploaded_by: Optional[str] = None,
+    document_tags: Optional[List[str]] = None
 ) -> tuple[int, str]:
     
     filename = os.path.basename(file_path)
     file_size = os.path.getsize(file_path)
     file_hash = calculate_file_hash(file_path)
 
-    # Check for duplicates
     existing_file = check_duplicate_file(file_hash)
     if existing_file:
         logger.warning(f"Duplicate file detected: {filename} matches existing file {existing_file['filename']}")
@@ -54,16 +54,15 @@ def ingest_pdf_sync(
                    f"(domain: {existing_file.get('compliance_domain', 'N/A')}, "
                    f"version: {existing_file.get('document_version', 'N/A')})"
         )
-    
-    # Create initial record with processing status
+
     initial_metadata = {
         "original_filename": filename,
         "file_size_bytes": file_size,
-        "processing_started_at": datetime.now(timezone.utc).isoformat()
+        "processing_started_at": datetime.now(timezone.utc).isoformat(),
+        "document_tags": document_tags or []
     }
 
     try:
-        # Insert initial record
         resp = supabase.table(settings.supabase_table_pdf_ingestion).insert({
             "filename": filename,
             "compliance_domain": compliance_domain,
@@ -73,7 +72,8 @@ def ingest_pdf_sync(
             "file_hash": file_hash,
             "original_path": file_path,
             "processing_status": "processing",
-            "metadata": initial_metadata
+            "metadata": initial_metadata,
+            "document_tags": document_tags 
         }).execute()
         
         if hasattr(resp, "error") and resp.error:
@@ -93,30 +93,27 @@ def ingest_pdf_sync(
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     
     try:
-        # Process the PDF
         logger.info(f"Starting PDF processing for {filename}")
         loader = PyPDFLoader(file_path)
         pages = loader.load()
-        
-        # Add compliance metadata to each document chunk
+
         for page in pages:
             page.metadata.update({
                 "compliance_domain": compliance_domain,
                 "document_version": document_version,
                 "filename": filename,
                 "ingestion_id": ingestion_id,
-                "file_hash": file_hash
+                "file_hash": file_hash,
+                "document_tags": document_tags or []
             })
         
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = splitter.split_documents(pages)
         logger.info(f"Split {filename} into {len(chunks)} chunks")
-        
-        # Add to vector store
+
         vector_store.add_documents(chunks)
         logger.info(f"Added {len(chunks)} embeddings to vector store")
-        
-        # Update record with success
+
         final_metadata = {
             **initial_metadata,
             "chunks": len(chunks),
@@ -134,7 +131,6 @@ def ingest_pdf_sync(
         
         if hasattr(update_resp, "error") and update_resp.error:
             logger.error("Failed to update ingestion record", exc_info=True)
-            # Don't raise here as the ingestion was successful
         
         logger.info(f"Successfully ingested {filename}: {len(chunks)} chunks")
         return len(chunks), ingestion_id

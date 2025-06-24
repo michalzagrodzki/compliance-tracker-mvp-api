@@ -646,8 +646,8 @@ def upload_pdf(
     file: UploadFile = File(...),
     compliance_domain: Optional[str] = Form(None, description="Compliance domain (e.g., 'GDPR', 'ISO_27001', 'SOX')"),
     document_version: Optional[str] = Form(None, description="Document version (e.g., 'v1.0', '2024-Q1')"),
-    uploaded_by: Optional[str] = Form(None, description="User ID who uploaded the document"),
-    document_tags: Optional[str] = Form(None, description="Comma-separated list of document tags (e.g., 'policy,current,iso_27001')")
+    document_tags: Optional[str] = Form(None, description="Comma-separated list of document tags (e.g., 'policy,current,iso_27001')"),
+    current_user: UserResponse = Depends(get_current_active_user)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
@@ -656,12 +656,6 @@ def upload_pdf(
         allowed_domains = ["ISO_27001", "GDPR", "SOX", "HIPAA", "PCI_DSS"]
         if compliance_domain not in allowed_domains:
             logging.warning(f"Unknown compliance domain: {compliance_domain}")
-
-    if uploaded_by:
-        try:
-            uuid.UUID(uploaded_by)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="uploaded_by must be a valid UUID")
 
     parsed_tags = []
     if document_tags:
@@ -701,7 +695,7 @@ def upload_pdf(
             file_path=file_path,
             compliance_domain=compliance_domain,
             document_version=document_version,
-            uploaded_by=uploaded_by,
+            uploaded_by=current_user.id,
             document_tags=parsed_tags
         )
         
