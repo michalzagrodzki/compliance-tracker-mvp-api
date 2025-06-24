@@ -19,7 +19,10 @@ def answer_question(
     question: str,
     match_threshold: float = 0.8,
     match_count: int = 5,
-    compliance_domain: Optional[str] = None
+    compliance_domain: Optional[str] = None,
+    user_domains: Optional[List[str]] = None,
+    document_version: Optional[str] = None,
+    document_tags: Optional[List[str]] = None
 ) -> Tuple[str, List[Dict[str, any]]]:
     """
     Answer a question using RAG with optional compliance domain filtering.
@@ -29,6 +32,9 @@ def answer_question(
         match_threshold: Minimum similarity threshold for document matching
         match_count: Maximum number of documents to retrieve
         compliance_domain: Optional compliance domain filter (e.g., 'GDPR', 'ISO27001')
+        user_domains: List of domains the user has access to
+        document_version: Optional document version filter
+        document_tags: Optional list of tags to filter by
     
     Returns:
         Tuple of (answer_string, list_of_source_documents)
@@ -47,7 +53,16 @@ def answer_question(
         if compliance_domain:
             rpc_params["compliance_domain_filter"] = compliance_domain
             
-        resp = supabase.rpc("match_documents", rpc_params).execute()
+        if user_domains:
+            rpc_params["user_domains"] = user_domains
+            
+        if document_version:
+            rpc_params["document_version_filter"] = document_version
+            
+        if document_tags:
+            rpc_params["document_tags_filter"] = document_tags
+            
+        resp = supabase.rpc("match_documents_with_domain", rpc_params).execute()
         
     except Exception as e:
         logger.error("Supabase RPC 'match_documents' failed", exc_info=True)
@@ -56,8 +71,11 @@ def answer_question(
     rows = resp.data or []
     if not rows:
         domain_info = f" in domain '{compliance_domain}'" if compliance_domain else ""
-        logger.warning(f"No documents returned by match_documents RPC{domain_info}")
-        return f"I couldn't find any relevant documents{domain_info}.", []
+        version_info = f" for version '{document_version}'" if document_version else ""
+        tags_info = f" with tags {document_tags}" if document_tags else ""
+        logger.warning(f"No documents returned by match_documents_with_domain RPC{domain_info}{version_info}{tags_info}")
+        return f"I couldn't find any relevant documents{domain_info}{version_info}{tags_info}.", []
+
 
     # Build context from retrieved documents
     context = "\n\n---\n\n".join(r["content"] for r in rows)
@@ -67,9 +85,15 @@ def answer_question(
     for r in rows:
         doc_metadata = r.get("metadata", {})
         
-        # Enhance metadata with compliance information
-        if compliance_domain:
-            doc_metadata["queried_domain"] = compliance_domain
+        doc_metadata.update({
+            "queried_domain": compliance_domain,
+            "compliance_domain": r.get("compliance_domain"),
+            "document_version": r.get("document_version"),
+            "document_tags": r.get("document_tags", []),
+            "source_filename": r.get("source_filename"),
+            "source_page_number": r.get("source_page_number"),
+            "chunk_index": r.get("chunk_index")
+        })
             
         source_doc = {
             "id": str(r["id"]),
@@ -88,6 +112,14 @@ def answer_question(
     if compliance_domain:
         domain_context = f"\n\nIMPORTANT: This query is in the context of {compliance_domain} compliance. Please ensure your answer addresses the specific regulatory requirements and provides accurate compliance guidance."
 
+    version_context = ""
+    if document_version:
+        version_context = f"\n\nNOTE: This query is specifically for document version {document_version}. Ensure your answer is relevant to this version."
+
+    tags_context = ""
+    if document_tags:
+        tags_context = f"\n\nCONTEXT: This query involves documents tagged with: {', '.join(document_tags)}."
+        
     prompt = (
         "Use the following context to answer the question. "
         "Provide specific references to document sections when possible. "
