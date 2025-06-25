@@ -20,8 +20,7 @@ def answer_question(
     match_threshold: float = 0.8,
     match_count: int = 5,
     compliance_domain: Optional[str] = None,
-    user_domains: Optional[List[str]] = None,
-    document_version: Optional[str] = None,
+    document_version: Optional[List[str]] = None,
     document_tags: Optional[List[str]] = None
 ) -> Tuple[str, List[Dict[str, any]]]:
     """
@@ -42,19 +41,14 @@ def answer_question(
     q_vector = embedding_model.embed_query(question)
     
     try:
-        # Call the enhanced match_documents function with domain filtering
         rpc_params = {
             "query_embedding": q_vector,
             "match_threshold": match_threshold,
             "match_count": match_count
         }
         
-        # Add compliance domain filter if specified
         if compliance_domain:
             rpc_params["compliance_domain_filter"] = compliance_domain
-            
-        if user_domains:
-            rpc_params["user_domains"] = user_domains
             
         if document_version:
             rpc_params["document_version_filter"] = document_version
@@ -68,8 +62,8 @@ def answer_question(
         logger.error("Supabase RPC 'match_documents' failed", exc_info=True)
         raise HTTPException(status_code=500, detail=f"DB function error: {e}")
 
-    rows = resp.data or []
-    if not rows:
+    docs = resp.data or []
+    if not docs:
         domain_info = f" in domain '{compliance_domain}'" if compliance_domain else ""
         version_info = f" for version '{document_version}'" if document_version else ""
         tags_info = f" with tags {document_tags}" if document_tags else ""
@@ -78,11 +72,11 @@ def answer_question(
 
 
     # Build context from retrieved documents
-    context = "\n\n---\n\n".join(r["content"] for r in rows)
+    context = "\n\n---\n\n".join(r["content"] for r in docs)
     
     # Prepare source documents with compliance metadata
     source_docs = []
-    for r in rows:
+    for r in docs:
         doc_metadata = r.get("metadata", {})
         
         doc_metadata.update({
@@ -91,8 +85,10 @@ def answer_question(
             "document_version": r.get("document_version"),
             "document_tags": r.get("document_tags", []),
             "source_filename": r.get("source_filename"),
-            "source_page_number": r.get("source_page_number"),
-            "chunk_index": r.get("chunk_index")
+            "source_page_number": r.get("page"),
+            "chunk_index": r.get("chunk_index"),
+            "title": r.get("title"),
+            "author": r.get("author")
         })
             
         source_doc = {
@@ -119,12 +115,12 @@ def answer_question(
     tags_context = ""
     if document_tags:
         tags_context = f"\n\nCONTEXT: This query involves documents tagged with: {', '.join(document_tags)}."
-        
+
     prompt = (
         "Use the following context to answer the question. "
         "Provide specific references to document sections when possible. "
         "If the answer involves compliance requirements, be precise about obligations and procedures."
-        f"{domain_context}\n\n"
+        f"{domain_context}{version_context}{tags_context}\n\n"
         f"Context:\n{context}\n\n"
         f"Question: {question}\n\n"
         "Answer:"
@@ -144,7 +140,7 @@ def answer_question(
                     "content": prompt
                 }
             ],
-            temperature=0.1,  # Lower temperature for more consistent compliance answers
+            temperature=0.1,
         )
     except Exception as e:
         logger.error("OpenAI ChatCompletion failed", exc_info=True)

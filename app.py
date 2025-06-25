@@ -391,7 +391,9 @@ def query_qa(req: QueryRequest, request: Request) -> QueryResponse:
         question=req.question,
         match_threshold=getattr(req, 'match_threshold', 0.75),
         match_count=getattr(req, 'match_count', 5),
-        compliance_domain=compliance_domain
+        compliance_domain=compliance_domain,
+        document_version=getattr(req, 'document_version'),
+        document_tags=getattr(req, 'document_tags', [])
     )
     
     end_time = time.time()
@@ -463,8 +465,6 @@ def query_qa(req: QueryRequest, request: Request) -> QueryResponse:
     tags=["RAG"],
 )
 def query_stream(req: QueryRequest, request: Request):
-    start_time = time.time()
-    
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
     
@@ -501,7 +501,6 @@ def query_stream(req: QueryRequest, request: Request):
     )
 
     def event_generator():
-        response_start = time.time()
         source_document_ids = []
         
         for token_data in stream_answer_sync(
@@ -513,8 +512,8 @@ def query_stream(req: QueryRequest, request: Request):
             match_threshold=getattr(req, 'match_threshold', 0.75),
             match_count=getattr(req, 'match_count', 5),
             user_id=getattr(req, 'user_id', None),
-            ip_address=ip_address,
-            user_agent=user_agent
+            document_version=getattr(req, 'document_version'),
+            document_tags=getattr(req, 'document_tags', [])
         ):
             if isinstance(token_data, dict) and "source_document_ids" in token_data:
                 source_document_ids = token_data["source_document_ids"]
