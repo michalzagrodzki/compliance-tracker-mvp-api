@@ -1005,7 +1005,202 @@ class DocumentTagsRequest(BaseModel):
         if v not in valid_statuses:
             raise ValueError(f'approval_status must be one of: {", ".join(valid_statuses)}')
         return v
+
+class AuditReportAccessLogRequest(BaseModel):
+    distribution_id: UUID = Field(..., description="Distribution ID being accessed")
+    access_ip_address: Optional[str] = Field(None, description="IP address of accessor")
+    user_agent: Optional[str] = Field(None, description="User agent string")
+
+class AuditSessionPdfIngestionRelationship(BaseModel):
+    id: UUID = Field(..., description="Unique relationship identifier")
+    audit_session_id: UUID = Field(..., description="Audit session ID")
+    pdf_ingestion_id: UUID = Field(..., description="PDF ingestion ID")
+    added_at: datetime = Field(..., description="When the relationship was created")
+    added_by: UUID = Field(..., description="User who created the relationship")
+    notes: Optional[str] = Field(None, description="Optional notes about the relationship")
     
+    class Config:
+        from_attributes = True
+
+class AuditSessionPdfIngestionCreate(BaseModel):
+    pdf_ingestion_id: UUID = Field(..., description="PDF ingestion ID to add")
+    notes: Optional[str] = Field(None, description="Optional notes about why this PDF is relevant")
+
+class AuditSessionPdfIngestionBulkCreate(BaseModel):
+    pdf_ingestion_ids: List[UUID] = Field(..., description="List of PDF ingestion IDs to add")
+    notes: Optional[str] = Field(None, description="Optional notes about why these PDFs are relevant")
+    
+    @validator('pdf_ingestion_ids')
+    def validate_pdf_ingestion_ids(cls, v):
+        if not v:
+            raise ValueError('pdf_ingestion_ids cannot be empty')
+        if len(v) > 50:  # Reasonable limit
+            raise ValueError('Cannot add more than 50 PDF ingestions at once')
+        return v
+
+class AuditSessionPdfIngestionBulkRemove(BaseModel):
+    pdf_ingestion_ids: List[UUID] = Field(..., description="List of PDF ingestion IDs to remove")
+    
+    @validator('pdf_ingestion_ids')
+    def validate_pdf_ingestion_ids(cls, v):
+        if not v:
+            raise ValueError('pdf_ingestion_ids cannot be empty')
+        return v
+
+class PdfIngestionWithRelationship(BaseModel):
+    id: UUID
+    filename: str
+    compliance_domain: Optional[str]
+    document_version: Optional[str]
+    uploaded_by: Optional[UUID]
+    file_size: Optional[int]
+    processing_status: str
+    total_chunks: Optional[int]
+    ingested_at: datetime
+    metadata: Optional[Dict[str, Any]] = None
+    relationship_id: UUID = Field(..., description="ID of the relationship record")
+    added_at: datetime = Field(..., description="When added to the audit session")
+    added_by: UUID = Field(..., description="User who added this PDF to the session")
+    notes: Optional[str] = Field(None, description="Notes about the relationship")
+    
+    class Config:
+        from_attributes = True
+
+class AuditSessionWithRelationship(BaseModel):
+    id: UUID
+    user_id: UUID
+    session_name: str
+    compliance_domain: str
+    started_at: datetime
+    ended_at: Optional[datetime]
+    total_queries: int
+    session_summary: Optional[str]
+    is_active: bool
+
+    relationship_id: UUID = Field(..., description="ID of the relationship record")
+    added_at: datetime = Field(..., description="When this session was linked to the PDF")
+    added_by: UUID = Field(..., description="User who created the relationship")
+    notes: Optional[str] = Field(None, description="Notes about the relationship")
+    
+    class Config:
+        from_attributes = True
+
+class AuditSessionPdfIngestionBulkResponse(BaseModel):
+    added_relationships: List[AuditSessionPdfIngestionRelationship] = Field(default_factory=list)
+    added_count: int = Field(0, description="Number of relationships created")
+    skipped_existing: List[UUID] = Field(default_factory=list, description="PDF ingestion IDs that were already linked")
+    skipped_count: int = Field(0, description="Number of relationships that were already existing")
+    
+class AuditSessionPdfIngestionBulkRemoveResponse(BaseModel):
+    message: str
+    removed_relationships: List[AuditSessionPdfIngestionRelationship] = Field(default_factory=list)
+    removed_count: int = Field(0, description="Number of relationships removed")
+    not_found_ids: List[UUID] = Field(default_factory=list, description="PDF ingestion IDs that were not linked")
+    not_found_count: int = Field(0, description="Number of PDF ingestions that were not linked")
+class AuditSessionResponseWithPdfCount(AuditSessionResponse):
+    pdf_ingestions_count: int = Field(0, description="Number of PDF ingestions linked to this session")
+
+class PdfIngestionResponseWithSessionCount(PdfIngestionResponse):
+    audit_sessions_count: int = Field(0, description="Number of audit sessions linked to this PDF ingestion")
+
+class AuditSessionSearchWithPdfFilters(AuditSessionSearchRequest):
+    has_pdf_ingestions: Optional[bool] = Field(None, description="Filter sessions that have/don't have PDF ingestions")
+    min_pdf_ingestions: Optional[int] = Field(None, ge=0, description="Minimum number of PDF ingestions")
+    max_pdf_ingestions: Optional[int] = Field(None, ge=0, description="Maximum number of PDF ingestions")
+    pdf_compliance_domain: Optional[str] = Field(None, description="Filter by compliance domain of linked PDFs")
+    pdf_document_version: Optional[str] = Field(None, description="Filter by version of linked PDFs")
+    pdf_uploaded_by: Optional[UUID] = Field(None, description="Filter by uploader of linked PDFs")
+
+class PdfIngestionSearchWithSessionFilters(PdfIngestionSearchRequest):
+    has_audit_sessions: Optional[bool] = Field(None, description="Filter PDFs that have/don't have audit sessions")
+    min_audit_sessions: Optional[int] = Field(None, ge=0, description="Minimum number of audit sessions")
+    max_audit_sessions: Optional[int] = Field(None, ge=0, description="Maximum number of audit sessions")
+    session_compliance_domain: Optional[str] = Field(None, description="Filter by compliance domain of linked sessions")
+    session_user_id: Optional[UUID] = Field(None, description="Filter by user ID of linked sessions")
+    session_is_active: Optional[bool] = Field(None, description="Filter by active status of linked sessions")
+
+class AuditSessionStatisticsWithPdf(BaseModel):
+    total_sessions: int
+    active_sessions: int
+    completed_sessions: int
+    total_queries: int
+    avg_queries_per_session: float
+    sessions_by_domain: Dict[str, int]
+    sessions_by_user: Dict[str, int]
+
+    sessions_with_pdfs: int = Field(0, description="Number of sessions with linked PDF ingestions")
+    sessions_without_pdfs: int = Field(0, description="Number of sessions without linked PDF ingestions")
+    total_pdf_ingestions_linked: int = Field(0, description="Total number of PDF ingestions linked across all sessions")
+    avg_pdfs_per_session: float = Field(0.0, description="Average number of PDF ingestions per session")
+    max_pdfs_in_session: int = Field(0, description="Maximum number of PDF ingestions in a single session")
+
+    pdf_domains_by_session_domain: Dict[str, Dict[str, int]] = Field(
+        default_factory=dict, 
+        description="Breakdown of PDF compliance domains by session compliance domain"
+    )
+    
+    filters_applied: Dict[str, Any]
+
+class PdfIngestionStatisticsWithSessions(BaseModel):
+    total_ingestions: int
+    completed_ingestions: int
+    failed_ingestions: int
+    processing_ingestions: int
+    success_rate: float
+    total_chunks_created: int
+    total_file_size_bytes: int
+    avg_chunks_per_document: float
+    ingestions_by_domain: Dict[str, int]
+    ingestions_by_user: Dict[str, int]
+    ingestions_by_version: Dict[str, int]
+
+    pdfs_with_sessions: int = Field(0, description="Number of PDF ingestions linked to audit sessions")
+    pdfs_without_sessions: int = Field(0, description="Number of PDF ingestions not linked to any audit session")
+    total_sessions_linked: int = Field(0, description="Total number of audit sessions linked across all PDFs")
+    avg_sessions_per_pdf: float = Field(0.0, description="Average number of audit sessions per PDF ingestion")
+    max_sessions_for_pdf: int = Field(0, description="Maximum number of audit sessions linked to a single PDF")
+
+    most_referenced_pdfs: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="PDF ingestions referenced by the most audit sessions"
+    )
+    
+    filters_applied: Dict[str, Any]
+class AuditSessionPdfIngestionFilters(BaseModel):
+    audit_session_id: Optional[UUID] = Field(None, description="Filter by audit session")
+    pdf_ingestion_id: Optional[UUID] = Field(None, description="Filter by PDF ingestion")
+    added_by: Optional[UUID] = Field(None, description="Filter by user who created the relationship")
+    added_after: Optional[datetime] = Field(None, description="Filter relationships created after this date")
+    added_before: Optional[datetime] = Field(None, description="Filter relationships created before this date")
+    has_notes: Optional[bool] = Field(None, description="Filter relationships that have/don't have notes")
+    skip: int = Field(0, ge=0, description="Records to skip")
+    limit: int = Field(10, ge=1, le=100, description="Maximum records to return")
+
+class RelationshipSummary(BaseModel):
+    total_relationships: int
+    unique_audit_sessions: int
+    unique_pdf_ingestions: int
+    relationships_with_notes: int
+    relationships_by_user: Dict[str, int]
+    relationships_by_domain: Dict[str, int]
+    recent_relationships: List[AuditSessionPdfIngestionRelationship]
+    
+class CrossReferenceAnalysis(BaseModel):
+    session_domain: str
+    linked_pdf_domains: Dict[str, int]
+    total_pdfs_linked: int
+    cross_domain_percentage: float = Field(description="Percentage of PDFs from different domains")
+    
+class ComplianceCoverageAnalysis(BaseModel):
+    audit_session_id: UUID
+    session_compliance_domain: str
+    linked_pdf_count: int
+    covered_domains: List[str]
+    domain_coverage: Dict[str, Dict[str, Any]]  # domain -> {pdf_count, latest_version, etc.}
+    coverage_gaps: List[str] = Field(description="Domains that might need more documentation")
+    coverage_score: float = Field(ge=0, le=1, description="Overall coverage score (0-1)")
+    recommendations: List[str] = Field(description="Recommendations for improving coverage")
+
 class DocumentTagConstants:    
     DOCUMENT_TYPES = {
         "reference_document": "ISO norms, GDPR regulations, standards",

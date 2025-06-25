@@ -19,6 +19,11 @@ from services.document import (
 )
 from services.schemas import (
     AuditSessionCreateResponse,
+    AuditSessionPdfIngestionBulkCreate,
+    AuditSessionPdfIngestionBulkRemove,
+    AuditSessionPdfIngestionBulkRemoveResponse,
+    AuditSessionPdfIngestionBulkResponse,
+    AuditSessionPdfIngestionCreate,
     ComplianceDomain,
     ComplianceGapCreate,
     ComplianceGapFromChatHistoryRequest,
@@ -27,6 +32,7 @@ from services.schemas import (
     DocumentTagConstants,
     DocumentTagsRequest,
     PdfIngestionSearchRequest,
+    PdfIngestionWithRelationship,
     PdfIngestionWithTagsRequest,
     QueryRequest, 
     QueryResponse, 
@@ -1077,6 +1083,110 @@ def delete_audit_session_endpoint(
         session_id=session_id,
         soft_delete=not hard_delete
     )
+
+@router_v1.post("/audit-sessions/{session_id}/pdf-ingestions",
+    summary="Add PDF ingestion to audit session",
+    description="Associate a PDF ingestion with an audit session for compliance tracking",
+    response_model=Dict[str, Any],
+    tags=["Audit Sessions"],
+    status_code=201
+)
+def add_pdf_ingestion_to_audit_session(
+    session_id: str = Path(..., description="Audit session ID"),
+    request_data: AuditSessionPdfIngestionCreate = Body(..., description="PDF ingestion to add"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    from services.audit_sessions import add_pdf_ingestion_to_session
+    
+    return add_pdf_ingestion_to_session(
+        session_id=session_id,
+        pdf_ingestion_id=str(request_data.pdf_ingestion_id),
+        added_by=str(current_user.id),
+        notes=request_data.notes
+    )
+
+@router_v1.post("/audit-sessions/{session_id}/pdf-ingestions/bulk",
+    summary="Add multiple PDF ingestions to audit session",
+    description="Associate multiple PDF ingestions with an audit session in a single operation",
+    response_model=AuditSessionPdfIngestionBulkResponse,
+    tags=["Audit Sessions"],
+    status_code=201
+)
+def bulk_add_pdf_ingestions_to_audit_session(
+    session_id: str = Path(..., description="Audit session ID"),
+    request_data: AuditSessionPdfIngestionBulkCreate = Body(..., description="PDF ingestions to add"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> AuditSessionPdfIngestionBulkResponse:
+    from services.audit_sessions import bulk_add_pdf_ingestions_to_session
+    
+    result = bulk_add_pdf_ingestions_to_session(
+        session_id=session_id,
+        pdf_ingestion_ids=[str(pid) for pid in request_data.pdf_ingestion_ids],
+        added_by=str(current_user.id),
+        notes=request_data.notes
+    )
+    
+    return AuditSessionPdfIngestionBulkResponse(**result)
+
+@router_v1.get("/audit-sessions/{session_id}/pdf-ingestions",
+    summary="Get PDF ingestions for audit session",
+    description="Retrieve all PDF ingestions associated with a specific audit session",
+    response_model=List[PdfIngestionWithRelationship],
+    tags=["Audit Sessions"],
+)
+def get_audit_session_pdf_ingestions(
+    session_id: str = Path(..., description="Audit session ID"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> List[PdfIngestionWithRelationship]:
+    from services.audit_sessions import get_pdf_ingestions_for_session
+    
+    results = get_pdf_ingestions_for_session(
+        session_id=session_id,
+        skip=skip,
+        limit=limit
+    )
+    
+    return [PdfIngestionWithRelationship(**item) for item in results]
+
+@router_v1.delete("/audit-sessions/{session_id}/pdf-ingestions/{pdf_ingestion_id}",
+    summary="Remove PDF ingestion from audit session",
+    description="Remove the association between a PDF ingestion and an audit session",
+    response_model=Dict[str, Any],
+    tags=["Audit Sessions"],
+)
+def remove_pdf_ingestion_from_audit_session(
+    session_id: str = Path(..., description="Audit session ID"),
+    pdf_ingestion_id: str = Path(..., description="PDF ingestion ID"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> Dict[str, Any]:
+    from services.audit_sessions import remove_pdf_ingestion_from_session
+    
+    return remove_pdf_ingestion_from_session(
+        session_id=session_id,
+        pdf_ingestion_id=pdf_ingestion_id
+    )
+
+@router_v1.delete("/audit-sessions/{session_id}/pdf-ingestions/bulk",
+    summary="Remove multiple PDF ingestions from audit session",
+    description="Remove multiple PDF ingestion associations from an audit session in a single operation",
+    response_model=AuditReportBulkActionRequest,
+    tags=["Audit Sessions"],
+)
+def bulk_remove_pdf_ingestions_from_audit_session(
+    session_id: str = Path(..., description="Audit session ID"),
+    request_data: AuditSessionPdfIngestionBulkRemove = Body(..., description="PDF ingestions to remove"),
+    current_user: UserResponse = Depends(require_compliance_officer_or_admin)
+) -> AuditSessionPdfIngestionBulkRemoveResponse:
+    from services.audit_sessions import bulk_remove_pdf_ingestions_from_session
+    
+    result = bulk_remove_pdf_ingestions_from_session(
+        session_id=session_id,
+        pdf_ingestion_ids=[str(pid) for pid in request_data.pdf_ingestion_ids]
+    )
+    
+    return AuditSessionPdfIngestionBulkRemoveResponse(**result)
 
 @router_v1.get("/audit-sessions/statistics",
     summary="Get audit session statistics",

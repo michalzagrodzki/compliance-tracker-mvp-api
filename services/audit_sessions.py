@@ -392,3 +392,365 @@ def get_audit_session_statistics(
     except Exception as e:
         logger.error("Failed to get audit session statistics", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+def add_pdf_ingestion_to_session(
+    session_id: str,
+    pdf_ingestion_id: str,
+    added_by: str,
+    notes: Optional[str] = None
+) -> Dict[str, Any]:
+    try:
+        logger.info(f"Adding PDF ingestion {pdf_ingestion_id} to audit session {session_id}")
+
+        existing_resp = (
+            supabase
+            .table(settings.supabase_table_audit_session_pdf_ingestions)
+            .select("*")
+            .eq("audit_session_id", session_id)
+            .eq("pdf_ingestion_id", pdf_ingestion_id)
+            .execute()
+        )
+        
+        if existing_resp.data:
+            raise HTTPException(
+                status_code=409,
+                detail="PDF ingestion is already associated with this audit session"
+            )
+
+        session_resp = (
+            supabase
+            .table(settings.supabase_table_audit_sessions)
+            .select("id")
+            .eq("id", session_id)
+            .execute()
+        )
+        
+        if not session_resp.data:
+            raise HTTPException(status_code=404, detail="Audit session not found")
+
+        pdf_resp = (
+            supabase
+            .table(settings.supabase_table_pdf_ingestion)
+            .select("id")
+            .eq("id", pdf_ingestion_id)
+            .execute()
+        )
+        
+        if not pdf_resp.data:
+            raise HTTPException(status_code=404, detail="PDF ingestion not found")
+
+        relationship_data = {
+            "audit_session_id": session_id,
+            "pdf_ingestion_id": pdf_ingestion_id,
+            "added_by": added_by,
+            "added_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        if notes:
+            relationship_data["notes"] = notes
+        
+        resp = (
+            supabase
+            .table(settings.supabase_table_audit_session_pdf_ingestions)
+            .insert(relationship_data)
+            .execute()
+        )
+        
+        if hasattr(resp, "error") and resp.error:
+            logger.error("Failed to add PDF ingestion to audit session", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to add PDF ingestion to session: {resp.error.message}"
+            )
+        
+        logger.info(f"Successfully added PDF ingestion {pdf_ingestion_id} to audit session {session_id}")
+        return resp.data[0]
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add PDF ingestion to audit session", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+def remove_pdf_ingestion_from_session(
+    session_id: str,
+    pdf_ingestion_id: str
+) -> Dict[str, Any]:
+    try:
+        logger.info(f"Removing PDF ingestion {pdf_ingestion_id} from audit session {session_id}")
+
+        existing_resp = (
+            supabase
+            .table(settings.supabase_table_audit_session_pdf_ingestions)
+            .select("*")
+            .eq("audit_session_id", session_id)
+            .eq("pdf_ingestion_id", pdf_ingestion_id)
+            .execute()
+        )
+        
+        if not existing_resp.data:
+            raise HTTPException(
+                status_code=404,
+                detail="PDF ingestion is not associated with this audit session"
+            )
+
+        resp = (
+            supabase
+            .table(settings.supabase_table_audit_session_pdf_ingestions)
+            .delete()
+            .eq("audit_session_id", session_id)
+            .eq("pdf_ingestion_id", pdf_ingestion_id)
+            .execute()
+        )
+        
+        if hasattr(resp, "error") and resp.error:
+            logger.error("Failed to remove PDF ingestion from audit session", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to remove PDF ingestion from session: {resp.error.message}"
+            )
+        
+        if not resp.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Relationship not found or already removed"
+            )
+        
+        logger.info(f"Successfully removed PDF ingestion {pdf_ingestion_id} from audit session {session_id}")
+        return {"message": f"PDF ingestion removed from audit session", "removed_relationship": resp.data[0]}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to remove PDF ingestion from audit session", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+def get_pdf_ingestions_for_session(
+    session_id: str,
+    skip: int = 0,
+    limit: int = 10
+) -> List[Dict[str, Any]]:
+    try:
+        logger.info(f"Getting PDF ingestions for audit session {session_id}")
+
+        resp = (
+            supabase
+            .table(settings.supabase_table_audit_session_pdf_ingestions)
+            .select("""
+                *,
+                pdf_ingestion:pdf_ingestion_id (
+                    id,
+                    filename,
+                    compliance_domain,
+                    document_version,
+                    uploaded_by,
+                    file_size,
+                    processing_status,
+                    total_chunks,
+                    ingested_at,
+                    metadata
+                )
+            """)
+            .eq("audit_session_id", session_id)
+            .order("added_at", desc=True)
+            .limit(limit)
+            .offset(skip)
+            .execute()
+        )
+        
+        if hasattr(resp, "error") and resp.error:
+            logger.error("Failed to get PDF ingestions for audit session", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to get PDF ingestions: {resp.error.message}"
+            )
+        
+        result = []
+        for item in resp.data:
+            pdf_data = item.get("pdf_ingestion", {})
+            if pdf_data:
+                pdf_data.update({
+                    "relationship_id": item["id"],
+                    "added_at": item["added_at"],
+                    "added_by": item["added_by"],
+                    "notes": item.get("notes")
+                })
+                result.append(pdf_data)
+        
+        logger.info(f"Retrieved {len(result)} PDF ingestions for audit session {session_id}")
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get PDF ingestions for audit session", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+def bulk_add_pdf_ingestions_to_session(
+    session_id: str,
+    pdf_ingestion_ids: List[str],
+    added_by: str,
+    notes: Optional[str] = None
+) -> Dict[str, Any]:
+    """Add multiple PDF ingestions to an audit session"""
+    try:
+        logger.info(f"Bulk adding {len(pdf_ingestion_ids)} PDF ingestions to audit session {session_id}")
+        
+        # Verify the audit session exists
+        session_resp = (
+            supabase
+            .table(settings.supabase_table_audit_sessions)
+            .select("id")
+            .eq("id", session_id)
+            .execute()
+        )
+        
+        if not session_resp.data:
+            raise HTTPException(status_code=404, detail="Audit session not found")
+        
+        # Check for existing relationships
+        existing_resp = (
+            supabase
+            .table(settings.supabase_table_audit_session_pdf_ingestions)
+            .select("pdf_ingestion_id")
+            .eq("audit_session_id", session_id)
+            .in_("pdf_ingestion_id", pdf_ingestion_ids)
+            .execute()
+        )
+        
+        existing_ids = {item["pdf_ingestion_id"] for item in existing_resp.data}
+        new_pdf_ids = [pid for pid in pdf_ingestion_ids if pid not in existing_ids]
+        
+        if not new_pdf_ids:
+            raise HTTPException(
+                status_code=409,
+                detail="All PDF ingestions are already associated with this audit session"
+            )
+        
+        # Verify all PDF ingestions exist
+        pdf_resp = (
+            supabase
+            .table(settings.supabase_table_pdf_ingestion)
+            .select("id")
+            .in_("id", new_pdf_ids)
+            .execute()
+        )
+        
+        found_pdf_ids = {item["id"] for item in pdf_resp.data}
+        invalid_ids = [pid for pid in new_pdf_ids if pid not in found_pdf_ids]
+        
+        if invalid_ids:
+            raise HTTPException(
+                status_code=404,
+                detail=f"PDF ingestions not found: {', '.join(invalid_ids)}"
+            )
+        
+        # Create relationships
+        relationships = []
+        for pdf_id in new_pdf_ids:
+            relationship_data = {
+                "audit_session_id": session_id,
+                "pdf_ingestion_id": pdf_id,
+                "added_by": added_by,
+                "added_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            if notes:
+                relationship_data["notes"] = notes
+            
+            relationships.append(relationship_data)
+        
+        resp = (
+            supabase
+            .table(settings.supabase_table_audit_session_pdf_ingestions)
+            .insert(relationships)
+            .execute()
+        )
+        
+        if hasattr(resp, "error") and resp.error:
+            logger.error("Failed to bulk add PDF ingestions to audit session", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to add PDF ingestions to session: {resp.error.message}"
+            )
+        
+        logger.info(f"Successfully bulk added {len(new_pdf_ids)} PDF ingestions to audit session {session_id}")
+        
+        result = {
+            "added_relationships": resp.data,
+            "added_count": len(new_pdf_ids),
+            "skipped_existing": list(existing_ids),
+            "skipped_count": len(existing_ids)
+        }
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to bulk add PDF ingestions to audit session", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+def bulk_remove_pdf_ingestions_from_session(
+    session_id: str,
+    pdf_ingestion_ids: List[str]
+) -> Dict[str, Any]:
+    """Remove multiple PDF ingestions from an audit session"""
+    try:
+        logger.info(f"Bulk removing {len(pdf_ingestion_ids)} PDF ingestions from audit session {session_id}")
+        
+        # Check which relationships exist
+        existing_resp = (
+            supabase
+            .table(settings.supabase_table_audit_session_pdf_ingestions)
+            .select("*")
+            .eq("audit_session_id", session_id)
+            .in_("pdf_ingestion_id", pdf_ingestion_ids)
+            .execute()
+        )
+        
+        if not existing_resp.data:
+            raise HTTPException(
+                status_code=404,
+                detail="No PDF ingestions are associated with this audit session"
+            )
+        
+        existing_pdf_ids = [item["pdf_ingestion_id"] for item in existing_resp.data]
+        
+        # Remove the relationships
+        resp = (
+            supabase
+            .table(settings.supabase_table_audit_session_pdf_ingestions)
+            .delete()
+            .eq("audit_session_id", session_id)
+            .in_("pdf_ingestion_id", existing_pdf_ids)
+            .execute()
+        )
+        
+        if hasattr(resp, "error") and resp.error:
+            logger.error("Failed to bulk remove PDF ingestions from audit session", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to remove PDF ingestions from session: {resp.error.message}"
+            )
+        
+        removed_count = len(resp.data)
+        not_found_ids = [pid for pid in pdf_ingestion_ids if pid not in existing_pdf_ids]
+        
+        logger.info(f"Successfully bulk removed {removed_count} PDF ingestions from audit session {session_id}")
+        
+        result = {
+            "message": f"Removed {removed_count} PDF ingestions from audit session",
+            "removed_relationships": resp.data,
+            "removed_count": removed_count,
+            "not_found_ids": not_found_ids,
+            "not_found_count": len(not_found_ids)
+        }
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to bulk remove PDF ingestions from audit session", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
