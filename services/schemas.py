@@ -36,6 +36,8 @@ class QueryResponse(BaseModel):
     audit_session_id: Optional[str] = None
     compliance_domain: Optional[str] = None
     response_time_ms: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Aggregated metadata from the query")
+    
 class ChatHistoryItem(BaseModel):
     """Enhanced chat history item matching the new table schema"""
     id: str
@@ -55,6 +57,7 @@ class ChatHistoryItem(BaseModel):
     # Query performance metrics
     response_time_ms: Optional[int] = None
     total_tokens_used: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Aggregated metadata from source documents")
 
 class ChatHistoryFilters(BaseModel):
     """Query parameters for filtering chat history"""

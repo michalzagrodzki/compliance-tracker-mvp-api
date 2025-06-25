@@ -1,6 +1,6 @@
 from datetime import time
 import logging
-from typing import List, Dict, Generator, Optional, Union
+from typing import Any, List, Dict, Generator, Optional, Union
 from fastapi import HTTPException
 from openai import OpenAI
 from config.config import settings
@@ -56,12 +56,35 @@ def stream_answer_sync(
         version_info = f" for version '{document_version}'" if document_version else ""
         tags_info = f" with tags {document_tags}" if document_tags else ""
         logger.warning(f"No documents returned by match_documents_with_domain RPC{domain_info}{version_info}{tags_info}")
-        return f"I couldn't find any relevant documents{domain_info}{version_info}{tags_info}.", []
+        
+        # Still log the interaction even with no results
+        try:
+            insert_chat_history(
+                conversation_id=conversation_id,
+                question=question,
+                answer=f"I couldn't find any relevant documents{domain_info}{version_info}{tags_info}.",
+                audit_session_id=audit_session_id,
+                compliance_domain=compliance_domain,
+                source_document_ids=[],
+                match_threshold=match_threshold,
+                match_count=match_count,
+                user_id=user_id,
+                response_time_ms=int((time.time() - start_time) * 1000),
+                total_tokens_used=0,
+                metadata={}
+            )
+        except Exception as e:
+            logger.error(f"Failed to log no-results chat history: {e}")
+            
+        yield f"I couldn't find any relevant documents{domain_info}{version_info}{tags_info}."
+        return
     
     source_document_ids = [str(doc["id"]) for doc in docs]
     
+    aggregated_metadata = _build_aggregated_metadata(docs, compliance_domain, document_version, document_tags)
+    
     # Yield metadata first (will be filtered out in endpoint)
-    yield {"source_document_ids": source_document_ids}
+    yield {"source_document_ids": source_document_ids, "metadata": aggregated_metadata}
     
     # Build context from documents
     context = "\n\n---\n\n".join(d["content"] for d in docs)
@@ -148,7 +171,8 @@ def stream_answer_sync(
             match_count=match_count,
             user_id=user_id,
             response_time_ms=response_time_ms,
-            total_tokens_used=token_count  # Approximate token count
+            total_tokens_used=token_count,
+            metadata=aggregated_metadata
         )
         
         logger.info(f"Logged streaming chat history for conversation {conversation_id} "
@@ -157,3 +181,114 @@ def stream_answer_sync(
     except Exception as e:
         logger.error(f"Failed to log streaming chat history: {e}")
 
+def _build_aggregated_metadata(
+    docs: List[Dict[str, Any]], 
+    compliance_domain: Optional[str], 
+    document_version: Optional[List[str]], 
+    document_tags: Optional[List[str]]
+) -> Dict[str, Any]:
+    """
+    Build aggregated metadata from source documents, similar to qa.py approach.
+    
+    Args:
+        docs: List of document records from the database
+        compliance_domain: Queried compliance domain
+        document_version: Queried document version
+        document_tags: Queried document tags
+        
+    Returns:
+        Dictionary containing aggregated metadata from all source documents
+    """
+    if not docs:
+        return {}
+    
+    # Collect metadata from all documents
+    source_filenames = set()
+    source_domains = set()
+    source_versions = set()
+    all_tags = set()
+    authors = set()
+    titles = set()
+    
+    # Statistics
+    total_similarity_score = 0.0
+    best_match_score = 0.0
+    
+    document_details = []
+    
+    for doc in docs:
+        doc_metadata = doc.get("metadata", {})
+        
+        # Collect unique values
+        if doc.get("source_filename"):
+            source_filenames.add(doc["source_filename"])
+        if doc.get("compliance_domain"):
+            source_domains.add(doc["compliance_domain"])
+        if doc.get("document_version"):
+            source_versions.add(doc["document_version"])
+        if doc.get("document_tags"):
+            all_tags.update(doc["document_tags"])
+        if doc.get("author"):
+            authors.add(doc["author"])
+        if doc.get("title"):
+            titles.add(doc["title"])
+            
+        # Calculate similarity statistics
+        similarity = float(doc.get("similarity", 0))
+        total_similarity_score += similarity
+        best_match_score = max(best_match_score, similarity)
+        
+        # Collect individual document details
+        document_details.append({
+            "document_id": str(doc["id"]),
+            "source_filename": doc.get("source_filename"),
+            "compliance_domain": doc.get("compliance_domain"),
+            "document_version": doc.get("document_version"),
+            "document_tags": doc.get("document_tags", []),
+            "similarity": similarity,
+            "page_number": doc.get("page"),
+            "chunk_index": doc.get("chunk_index"),
+            "title": doc.get("title"),
+            "author": doc.get("author")
+        })
+    
+    # Calculate average similarity
+    avg_similarity = total_similarity_score / len(docs) if docs else 0.0
+    
+    # Build aggregated metadata
+    aggregated_metadata = {
+        # Query context
+        "queried_domain": compliance_domain,
+        "queried_version": document_version,
+        "queried_tags": document_tags,
+        
+        # Source document aggregations
+        "source_filenames": list(source_filenames),
+        "source_domains": list(source_domains),
+        "source_versions": list(source_versions),
+        "all_document_tags": list(all_tags),
+        "source_authors": list(authors),
+        "source_titles": list(titles),
+        
+        # Retrieval statistics
+        "total_documents_retrieved": len(docs),
+        "best_match_score": best_match_score,
+        "average_similarity": round(avg_similarity, 4),
+        "similarity_range": {
+            "min": min(doc.get("similarity", 0) for doc in docs) if docs else 0,
+            "max": best_match_score
+        },
+        
+        # Individual document details
+        "document_details": document_details,
+        
+        # Compliance metadata summary
+        "compliance_summary": {
+            "domains_covered": list(source_domains),
+            "versions_referenced": list(source_versions),
+            "regulatory_tags": [tag for tag in all_tags if any(reg in tag.lower() for reg in ['iso', 'gdpr', 'sox', 'hipaa', 'pci'])],
+            "document_types": [tag for tag in all_tags if any(dtype in tag.lower() for dtype in ['policy', 'procedure', 'standard', 'guideline'])]
+        }
+    }
+    
+    return aggregated_metadata

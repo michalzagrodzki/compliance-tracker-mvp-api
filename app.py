@@ -399,10 +399,10 @@ def query_qa(req: QueryRequest, request: Request) -> QueryResponse:
     end_time = time.time()
     response_time_ms = int((end_time - start_time) * 1000)
     
-    # Extract source document IDs for audit trail
     source_document_ids = [source["id"] for source in sources]
     
-    # Log chat history with audit context
+    aggregated_metadata = _build_query_metadata(sources, compliance_domain, getattr(req, 'document_version'), getattr(req, 'document_tags', []))
+
     conversation_id = req.conversation_id or str(uuid.uuid4())
     
     try:
@@ -417,7 +417,8 @@ def query_qa(req: QueryRequest, request: Request) -> QueryResponse:
             match_count=getattr(req, 'match_count', 5),
             user_id=getattr(req, 'user_id', None),
             response_time_ms=response_time_ms,
-            total_tokens_used=None
+            total_tokens_used=None,
+            metadata=aggregated_metadata
         )
     except Exception as e:
         logging.warning(f"Failed to log chat history: {e}")
@@ -455,7 +456,8 @@ def query_qa(req: QueryRequest, request: Request) -> QueryResponse:
         conversation_id=conversation_id,
         audit_session_id=req.audit_session_id,
         compliance_domain=compliance_domain,
-        response_time_ms=response_time_ms
+        response_time_ms=response_time_ms,
+        metadata=aggregated_metadata
     )
 
 @router_v1.post("/query-stream",
@@ -502,7 +504,8 @@ def query_stream(req: QueryRequest, request: Request):
 
     def event_generator():
         source_document_ids = []
-        
+        metadata = {}
+
         for token_data in stream_answer_sync(
             question=req.question,
             conversation_id=conversation_id,
@@ -515,8 +518,11 @@ def query_stream(req: QueryRequest, request: Request):
             document_version=getattr(req, 'document_version'),
             document_tags=getattr(req, 'document_tags', [])
         ):
-            if isinstance(token_data, dict) and "source_document_ids" in token_data:
-                source_document_ids = token_data["source_document_ids"]
+            if isinstance(token_data, dict):
+                if "source_document_ids" in token_data:
+                    source_document_ids = token_data["source_document_ids"]
+                if "metadata" in token_data:
+                    metadata = token_data["metadata"]
                 continue
             
             yield token_data
@@ -2068,6 +2074,110 @@ def cleanup_expired_audit_report_distributions(
     return cleanup_expired_distributions()
 
 app.include_router(router_v1)
+
+def _build_query_metadata(
+    sources: List[Dict[str, Any]], 
+    compliance_domain: Optional[str], 
+    document_version: Optional[str], 
+    document_tags: Optional[List[str]]
+) -> Dict[str, Any]:
+    """
+    Build aggregated metadata from source documents for the query endpoint.
+    Similar to the streaming approach but adapted for the sources format from answer_question.
+    """
+    if not sources:
+        return {}
+    
+    # Collect metadata from all source documents
+    source_filenames = set()
+    source_domains = set()
+    source_versions = set()
+    all_tags = set()
+    authors = set()
+    titles = set()
+    
+    # Statistics
+    total_similarity_score = 0.0
+    best_match_score = 0.0
+    
+    document_details = []
+    
+    for source in sources:
+        metadata = source.get("metadata", {})
+        
+        # Collect unique values from metadata
+        if metadata.get("source_filename"):
+            source_filenames.add(metadata["source_filename"])
+        if metadata.get("compliance_domain"):
+            source_domains.add(metadata["compliance_domain"])
+        if metadata.get("document_version"):
+            source_versions.add(metadata["document_version"])
+        if metadata.get("document_tags"):
+            all_tags.update(metadata["document_tags"])
+        if metadata.get("author"):
+            authors.add(metadata["author"])
+        if metadata.get("title"):
+            titles.add(metadata["title"])
+            
+        # Calculate similarity statistics
+        similarity = float(source.get("similarity", 0))
+        total_similarity_score += similarity
+        best_match_score = max(best_match_score, similarity)
+        
+        # Collect individual document details
+        document_details.append({
+            "document_id": str(source["id"]),
+            "source_filename": metadata.get("source_filename"),
+            "compliance_domain": metadata.get("compliance_domain"),
+            "document_version": metadata.get("document_version"),
+            "document_tags": metadata.get("document_tags", []),
+            "similarity": similarity,
+            "page_number": metadata.get("source_page_number"),
+            "chunk_index": metadata.get("chunk_index"),
+            "title": metadata.get("title"),
+            "author": metadata.get("author")
+        })
+    
+    # Calculate average similarity
+    avg_similarity = total_similarity_score / len(sources) if sources else 0.0
+    
+    # Build aggregated metadata
+    aggregated_metadata = {
+        # Query context
+        "queried_domain": compliance_domain,
+        "queried_version": document_version,
+        "queried_tags": document_tags,
+        
+        # Source document aggregations
+        "source_filenames": list(source_filenames),
+        "source_domains": list(source_domains),
+        "source_versions": list(source_versions),
+        "all_document_tags": list(all_tags),
+        "source_authors": list(authors),
+        "source_titles": list(titles),
+        
+        # Retrieval statistics
+        "total_documents_retrieved": len(sources),
+        "best_match_score": best_match_score,
+        "average_similarity": round(avg_similarity, 4),
+        "similarity_range": {
+            "min": min(source.get("similarity", 0) for source in sources) if sources else 0,
+            "max": best_match_score
+        },
+        
+        # Individual document details
+        "document_details": document_details,
+        
+        # Compliance metadata summary
+        "compliance_summary": {
+            "domains_covered": list(source_domains),
+            "versions_referenced": list(source_versions),
+            "regulatory_tags": [tag for tag in all_tags if any(reg in tag.lower() for reg in ['iso', 'gdpr', 'sox', 'hipaa', 'pci'])],
+            "document_types": [tag for tag in all_tags if any(dtype in tag.lower() for dtype in ['policy', 'procedure', 'standard', 'guideline'])]
+        }
+    }
+    
+    return aggregated_metadata
 
 if __name__ == "__main__":
     import uvicorn

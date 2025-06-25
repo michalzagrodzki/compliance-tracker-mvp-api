@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from fastapi import HTTPException
 from db.supabase_client import create_supabase_client
 from config.config import settings
@@ -33,7 +33,8 @@ def get_chat_history(
                 match_count,
                 user_id,
                 response_time_ms,
-                total_tokens_used
+                total_tokens_used,
+                metadata
             """)
             .eq("conversation_id", conversation_id)
             .order("created_at", desc=False)
@@ -69,7 +70,8 @@ def get_chat_history(
                 "match_count": row["match_count"],
                 "user_id": str(row["user_id"]) if row["user_id"] else None,
                 "response_time_ms": row["response_time_ms"],
-                "total_tokens_used": row["total_tokens_used"]
+                "total_tokens_used": row["total_tokens_used"],
+                "metadata": row.get("metadata", {})
             }
             data.append(processed_row)
         
@@ -92,7 +94,8 @@ def insert_chat_history(
     match_count: Optional[int] = None,
     user_id: Optional[str] = None,
     response_time_ms: Optional[int] = None,
-    total_tokens_used: Optional[int] = None
+    total_tokens_used: Optional[int] = None,
+    metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, any]:
     try:
         insert_data = {
@@ -106,7 +109,8 @@ def insert_chat_history(
             "match_count": match_count,
             "user_id": user_id,
             "response_time_ms": response_time_ms,
-            "total_tokens_used": total_tokens_used
+            "total_tokens_used": total_tokens_used,
+            "metadata": metadata or {}
         }
         
         insert_data = {k: v for k, v in insert_data.items() if v is not None}
@@ -151,7 +155,8 @@ def get_audit_session_history(
                 match_count,
                 user_id,
                 response_time_ms,
-                total_tokens_used
+                total_tokens_used,
+                metadata
             """)
             .eq("audit_session_id", audit_session_id)
             .order("created_at", desc=False)
@@ -178,7 +183,8 @@ def get_audit_session_history(
                 "match_count": row["match_count"],
                 "user_id": str(row["user_id"]) if row["user_id"] else None,
                 "response_time_ms": row["response_time_ms"],
-                "total_tokens_used": row["total_tokens_used"]
+                "total_tokens_used": row["total_tokens_used"],
+                "metadata": row.get("metadata", {})
             }
             data.append(processed_row)
             
@@ -211,7 +217,8 @@ def get_audit_session_history(
                 match_count,
                 user_id,
                 response_time_ms,
-                total_tokens_used
+                total_tokens_used,
+                metadata
             """)
             .eq("audit_session_id", audit_session_id)
             .order("created_at", desc=False)
@@ -238,7 +245,8 @@ def get_audit_session_history(
                 "match_count": row["match_count"],
                 "user_id": str(row["user_id"]) if row["user_id"] else None,
                 "response_time_ms": row["response_time_ms"],
-                "total_tokens_used": row["total_tokens_used"]
+                "total_tokens_used": row["total_tokens_used"],
+                "metadata": row.get("metadata", {})
             }
             data.append(processed_row)
             
@@ -266,7 +274,7 @@ def get_domain_history(
             .select("""
                 id, conversation_id, question, answer, created_at,
                 audit_session_id, compliance_domain, source_document_ids,
-                match_threshold, match_count, user_id, response_time_ms, total_tokens_used
+                match_threshold, match_count, user_id, response_time_ms, total_tokens_used, metadata
             """)
             .eq("compliance_domain", domain_code)
             .order("created_at", desc=True)
@@ -298,7 +306,8 @@ def get_domain_history(
                 "match_count": row["match_count"],
                 "user_id": str(row["user_id"]) if row["user_id"] else None,
                 "response_time_ms": row["response_time_ms"],
-                "total_tokens_used": row["total_tokens_used"]
+                "total_tokens_used": row["total_tokens_used"],
+                "metadata": row.get("metadata", {})
             }
             data.append(processed_row)
             
@@ -326,7 +335,7 @@ def get_user_history(
             .select("""
                 id, conversation_id, question, answer, created_at,
                 audit_session_id, compliance_domain, source_document_ids,
-                match_threshold, match_count, user_id, response_time_ms, total_tokens_used
+                match_threshold, match_count, user_id, response_time_ms, total_tokens_used, metadata
             """)
             .eq("user_id", user_id)
             .order("created_at", desc=True)
@@ -358,7 +367,8 @@ def get_user_history(
                 "match_count": row["match_count"],
                 "user_id": str(row["user_id"]) if row["user_id"] else None,
                 "response_time_ms": row["response_time_ms"],
-                "total_tokens_used": row["total_tokens_used"]
+                "total_tokens_used": row["total_tokens_used"],
+                "metadata": row.get("metadata", {})
             }
             data.append(processed_row)
             
