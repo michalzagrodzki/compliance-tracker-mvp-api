@@ -548,6 +548,7 @@ def get_pdf_ingestions_for_session(
                     processing_status,
                     total_chunks,
                     ingested_at,
+                    document_tags,
                     metadata
                 )
             """)

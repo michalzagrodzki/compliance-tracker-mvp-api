@@ -1058,6 +1058,7 @@ class PdfIngestionWithRelationship(BaseModel):
     total_chunks: Optional[int]
     ingested_at: datetime
     metadata: Optional[Dict[str, Any]] = None
+    document_tags: Optional[List[str]] = None
     relationship_id: UUID = Field(..., description="ID of the relationship record")
     added_at: datetime = Field(..., description="When added to the audit session")
     added_by: UUID = Field(..., description="User who added this PDF to the session")
