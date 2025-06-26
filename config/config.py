@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     supabase_table_audit_reports: str = Field("audit_reports", env="SUPABASE_TABLE_AUDIT_REPORTS")
     supabase_table_audit_report_versions: str = Field("audit_report_versions", env="SUPABASE_TABLE_AUDIT_REPORT_VERSIONS")
     supabase_table_audit_report_distributions: str = Field("audit_report_distributions", env="SUPABASE_TABLE_AUDIT_REPORT_DISTRIBUTIONS")
+    supabase_table_audit_session_pdf_ingestions: str = Field("audit_session_pdf_ingestions", env="SUPABASE_TABLE_AUDIT_SESSION_PDF_INGESTIONS")
 
     # OpenAI
     openai_api_key: str = Field(..., env="OPENAI_API_KEY")
