@@ -1,4 +1,4 @@
-from datetime import time
+import time
 import logging
 from typing import Any, List, Dict, Generator, Optional, Union
 from fastapi import HTTPException
@@ -25,35 +25,32 @@ def stream_answer_sync(
 ) -> Generator[Union[str, Dict], None, None]:
     start_time = time.time()
     
-    # Fetch similar documents with domain filtering
+    # Fetch similar documents using your original function
     q_vector = embedding_model.embed_query(question)
     
     try:
+        # Use your existing function with proper parameters
         rpc_params = {
             "query_embedding": q_vector,
             "match_threshold": match_threshold,
-            "match_count": match_count
+            "match_count": match_count,
+            "compliance_domain_filter": compliance_domain,
+            "user_domains": None,  # You can implement user domain access control here
+            "document_version_filter": document_version[0] if document_version else None,
+            "document_tags_filter": document_tags
         }
         
-        if compliance_domain:
-            rpc_params["compliance_domain_filter"] = compliance_domain
-            
-        if document_version:
-            rpc_params["document_version_filter"] = document_version
-            
-        if document_tags:
-            rpc_params["document_tags_filter"] = document_tags
-            
         resp = supabase.rpc("match_documents_with_domain", rpc_params).execute()
         
     except Exception as e:
-        logger.error("Supabase RPC 'match_documents' failed", exc_info=True)
+        logger.error("Supabase RPC 'match_documents_with_domain' failed", exc_info=True)
         raise HTTPException(status_code=500, detail=f"DB function error: {e}")
 
     docs = resp.data or []
+    
     if not docs:
         domain_info = f" in domain '{compliance_domain}'" if compliance_domain else ""
-        version_info = f" for version '{document_version}'" if document_version else ""
+        version_info = f" for version '{document_version[0]}'" if document_version else ""
         tags_info = f" with tags {document_tags}" if document_tags else ""
         logger.warning(f"No documents returned by match_documents_with_domain RPC{domain_info}{version_info}{tags_info}")
         
@@ -105,7 +102,7 @@ def stream_answer_sync(
 
     version_context = ""
     if document_version:
-        version_context = f"\n\nNOTE: This query is specifically for document version {document_version}. Ensure your answer is relevant to this version."
+        version_context = f"\n\nNOTE: This query is specifically for document version {document_version[0]}. Ensure your answer is relevant to this version."
 
     tags_context = ""
     if document_tags:
@@ -188,12 +185,12 @@ def _build_aggregated_metadata(
     document_tags: Optional[List[str]]
 ) -> Dict[str, Any]:
     """
-    Build aggregated metadata from source documents, similar to qa.py approach.
+    Build aggregated metadata from source documents returned by your original function.
     
     Args:
         docs: List of document records from the database
         compliance_domain: Queried compliance domain
-        document_version: Queried document version
+        document_version: Queried document version list
         document_tags: Queried document tags
         
     Returns:
@@ -202,13 +199,11 @@ def _build_aggregated_metadata(
     if not docs:
         return {}
     
-    # Collect metadata from all documents
+    # Collect metadata from all documents - using your function's return structure
     source_filenames = set()
     source_domains = set()
     source_versions = set()
     all_tags = set()
-    authors = set()
-    titles = set()
     
     # Statistics
     total_similarity_score = 0.0
@@ -217,9 +212,6 @@ def _build_aggregated_metadata(
     document_details = []
     
     for doc in docs:
-        doc_metadata = doc.get("metadata", {})
-        
-        # Collect unique values
         if doc.get("source_filename"):
             source_filenames.add(doc["source_filename"])
         if doc.get("compliance_domain"):
@@ -228,17 +220,13 @@ def _build_aggregated_metadata(
             source_versions.add(doc["document_version"])
         if doc.get("document_tags"):
             all_tags.update(doc["document_tags"])
-        if doc.get("author"):
-            authors.add(doc["author"])
-        if doc.get("title"):
-            titles.add(doc["title"])
-            
-        # Calculate similarity statistics
+
         similarity = float(doc.get("similarity", 0))
         total_similarity_score += similarity
         best_match_score = max(best_match_score, similarity)
         
-        # Collect individual document details
+        doc_metadata = doc.get("metadata", {})
+        
         document_details.append({
             "document_id": str(doc["id"]),
             "source_filename": doc.get("source_filename"),
@@ -246,16 +234,14 @@ def _build_aggregated_metadata(
             "document_version": doc.get("document_version"),
             "document_tags": doc.get("document_tags", []),
             "similarity": similarity,
-            "page_number": doc.get("page"),
+            "source_page_number": doc.get("source_page_number"),
             "chunk_index": doc.get("chunk_index"),
-            "title": doc.get("title"),
-            "author": doc.get("author")
+            "title": doc_metadata.get("title"),
+            "author": doc_metadata.get("author")
         })
     
-    # Calculate average similarity
     avg_similarity = total_similarity_score / len(docs) if docs else 0.0
     
-    # Build aggregated metadata
     aggregated_metadata = {
         # Query context
         "queried_domain": compliance_domain,
@@ -267,8 +253,6 @@ def _build_aggregated_metadata(
         "source_domains": list(source_domains),
         "source_versions": list(source_versions),
         "all_document_tags": list(all_tags),
-        "source_authors": list(authors),
-        "source_titles": list(titles),
         
         # Retrieval statistics
         "total_documents_retrieved": len(docs),

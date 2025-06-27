@@ -5,7 +5,6 @@ from openai import OpenAI
 from langchain_openai import OpenAIEmbeddings
 from config.config import settings
 from db.supabase_client import create_supabase_client
-from config.config import settings
 
 logger = logging.getLogger(__name__)
 supabase = create_supabase_client()
@@ -17,23 +16,22 @@ embedding_model = OpenAIEmbeddings(
 
 def answer_question(
     question: str,
-    match_threshold: float = 0.8,
+    match_threshold: float = 0.75,
     match_count: int = 5,
     compliance_domain: Optional[str] = None,
     document_version: Optional[List[str]] = None,
     document_tags: Optional[List[str]] = None
 ) -> Tuple[str, List[Dict[str, any]]]:
     """
-    Answer a question using RAG with optional compliance domain filtering.
+    Answer a question using RAG with compliance-first filtering using your original function.
     
     Args:
         question: The user's question
-        match_threshold: Minimum similarity threshold for document matching
-        match_count: Maximum number of documents to retrieve
+        match_threshold: Minimum similarity threshold for document matching (default 0.75)
+        match_count: Maximum number of documents to retrieve (default 5)
         compliance_domain: Optional compliance domain filter (e.g., 'GDPR', 'ISO27001')
-        user_domains: List of domains the user has access to
-        document_version: Optional document version filter
-        document_tags: Optional list of tags to filter by
+        document_version: Optional document version filter (takes first version if list provided)
+        document_tags: Optional list of tags to filter by (uses array overlap)
     
     Returns:
         Tuple of (answer_string, list_of_source_documents)
@@ -41,35 +39,30 @@ def answer_question(
     q_vector = embedding_model.embed_query(question)
     
     try:
+        # Prepare parameters for your original function
         rpc_params = {
             "query_embedding": q_vector,
             "match_threshold": match_threshold,
-            "match_count": match_count
+            "match_count": match_count,
+            "compliance_domain_filter": compliance_domain,
+            "user_domains": None,  # You can implement user domain access control here
+            "document_version_filter": document_version[0] if document_version else None,  # Take first version
+            "document_tags_filter": document_tags
         }
         
-        if compliance_domain:
-            rpc_params["compliance_domain_filter"] = compliance_domain
-            
-        if document_version:
-            rpc_params["document_version_filter"] = document_version
-            
-        if document_tags:
-            rpc_params["document_tags_filter"] = document_tags
-            
         resp = supabase.rpc("match_documents_with_domain", rpc_params).execute()
         
     except Exception as e:
-        logger.error("Supabase RPC 'match_documents' failed", exc_info=True)
+        logger.error("Supabase RPC 'match_documents_with_domain' failed", exc_info=True)
         raise HTTPException(status_code=500, detail=f"DB function error: {e}")
 
     docs = resp.data or []
     if not docs:
         domain_info = f" in domain '{compliance_domain}'" if compliance_domain else ""
-        version_info = f" for version '{document_version}'" if document_version else ""
+        version_info = f" for version '{document_version[0]}'" if document_version else ""
         tags_info = f" with tags {document_tags}" if document_tags else ""
         logger.warning(f"No documents returned by match_documents_with_domain RPC{domain_info}{version_info}{tags_info}")
         return f"I couldn't find any relevant documents{domain_info}{version_info}{tags_info}.", []
-
 
     # Build context from retrieved documents
     context = "\n\n---\n\n".join(r["content"] for r in docs)
@@ -77,20 +70,20 @@ def answer_question(
     # Prepare source documents with compliance metadata
     source_docs = []
     for r in docs:
-        doc_metadata = r.get("metadata", {})
+        # Your function returns compliance fields directly + metadata jsonb
+        doc_metadata = dict(r.get("metadata", {}))  # Start with existing metadata from jsonb field
         
+        # Add the compliance fields returned directly by your function
         doc_metadata.update({
             "queried_domain": compliance_domain,
-            "compliance_domain": r.get("compliance_domain"),
-            "document_version": r.get("document_version"),
-            "document_tags": r.get("document_tags", []),
-            "source_filename": r.get("source_filename"),
-            "source_page_number": r.get("page"),
-            "chunk_index": r.get("chunk_index"),
-            "title": r.get("title"),
-            "author": r.get("author")
+            "compliance_domain": r.get("compliance_domain"),  # Direct field from your function
+            "document_version": r.get("document_version"),    # Direct field from your function
+            "document_tags": r.get("document_tags", []),      # Direct field from your function
+            "source_filename": r.get("source_filename"),      # Direct field from your function
+            "source_page_number": r.get("source_page_number"), # Direct field from your function
+            "chunk_index": r.get("chunk_index"),              # Direct field from your function
         })
-            
+        
         source_doc = {
             "id": str(r["id"]),
             "similarity": float(r["similarity"]),
@@ -110,7 +103,7 @@ def answer_question(
 
     version_context = ""
     if document_version:
-        version_context = f"\n\nNOTE: This query is specifically for document version {document_version}. Ensure your answer is relevant to this version."
+        version_context = f"\n\nNOTE: This query is specifically for document version {document_version[0]}. Ensure your answer is relevant to this version."
 
     tags_context = ""
     if document_tags:
