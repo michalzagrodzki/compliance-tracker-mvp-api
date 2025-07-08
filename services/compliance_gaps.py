@@ -100,13 +100,29 @@ def create_compliance_gap(gap_data: Dict[str, Any]) -> Dict[str, Any]:
     try:
         logger.info(f"Creating compliance gap for domain: {gap_data.get('compliance_domain')}")
 
-        # Ensure required timestamps are present
+        # Ensure required timestamps are present and properly formatted as ISO strings
         if "detected_at" not in gap_data:
             gap_data["detected_at"] = datetime.now(timezone.utc).isoformat()
+        elif isinstance(gap_data["detected_at"], datetime):
+            gap_data["detected_at"] = gap_data["detected_at"].isoformat()
+            
         if "created_at" not in gap_data:
             gap_data["created_at"] = datetime.now(timezone.utc).isoformat()
+        elif isinstance(gap_data["created_at"], datetime):
+            gap_data["created_at"] = gap_data["created_at"].isoformat()
+            
         if "updated_at" not in gap_data:
             gap_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        elif isinstance(gap_data["updated_at"], datetime):
+            gap_data["updated_at"] = gap_data["updated_at"].isoformat()
+
+        # Convert any other datetime fields to ISO strings
+        datetime_fields = [
+            "acknowledged_at", "resolved_at", "last_reviewed_at", "due_date"
+        ]
+        for field in datetime_fields:
+            if field in gap_data and isinstance(gap_data[field], datetime):
+                gap_data[field] = gap_data[field].isoformat()
 
         # Set default values if not provided
         gap_data.setdefault("status", "identified")
@@ -120,29 +136,104 @@ def create_compliance_gap(gap_data: Dict[str, Any]) -> Dict[str, Any]:
         gap_data.setdefault("recommended_actions", [])
         gap_data.setdefault("session_context", {})
         
-        # Ensure UUID fields are properly formatted
-        if "user_id" in gap_data and not isinstance(gap_data["user_id"], str):
-            gap_data["user_id"] = str(gap_data["user_id"])
+        # Handle UUID fields - ensure they are properly formatted strings
+        uuid_fields = ["user_id", "audit_session_id", "assigned_to", "pdf_ingestion_id"]
+        for field in uuid_fields:
+            if field in gap_data and gap_data[field] and not isinstance(gap_data[field], str):
+                gap_data[field] = str(gap_data[field])
         
-        if "audit_session_id" in gap_data and not isinstance(gap_data["audit_session_id"], str):
-            gap_data["audit_session_id"] = str(gap_data["audit_session_id"])
+        # Handle chat_history_id specifically - it's a BIGINT, not UUID
+        if "chat_history_id" in gap_data and gap_data["chat_history_id"]:
+            try:
+                # Convert to integer if it's a string number
+                gap_data["chat_history_id"] = int(gap_data["chat_history_id"])
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid chat_history_id format: {gap_data['chat_history_id']}")
+                gap_data["chat_history_id"] = None
         
-        if "assigned_to" in gap_data and gap_data["assigned_to"] and not isinstance(gap_data["assigned_to"], str):
-            gap_data["assigned_to"] = str(gap_data["assigned_to"])
+        # Handle potential_fine_amount - ensure it's a proper decimal/float
+        if "potential_fine_amount" in gap_data and gap_data["potential_fine_amount"]:
+            try:
+                gap_data["potential_fine_amount"] = float(gap_data["potential_fine_amount"])
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid potential_fine_amount: {gap_data['potential_fine_amount']}")
+                gap_data["potential_fine_amount"] = None
         
-        if "pdf_ingestion_id" in gap_data and gap_data["pdf_ingestion_id"] and not isinstance(gap_data["pdf_ingestion_id"], str):
-            gap_data["pdf_ingestion_id"] = str(gap_data["pdf_ingestion_id"])
+        # Handle confidence_score and false_positive_likelihood - ensure they're floats
+        decimal_fields = ["confidence_score", "false_positive_likelihood", "similarity_threshold_used", "best_match_score"]
+        for field in decimal_fields:
+            if field in gap_data and gap_data[field] is not None:
+                try:
+                    gap_data[field] = float(gap_data[field])
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid {field}: {gap_data[field]}")
+                    gap_data[field] = None
         
-        # Convert Decimal objects to strings for Supabase compatibility
+        # Convert Decimal objects to floats for Supabase compatibility
         for key, value in gap_data.items():
             if isinstance(value, Decimal):
                 gap_data[key] = float(value)
         
-        # Insert into database
+        # Ensure array fields are properly formatted
+        array_fields = ["search_terms_used", "related_documents", "recommended_actions"]
+        for field in array_fields:
+            if field in gap_data and gap_data[field] is not None:
+                if not isinstance(gap_data[field], list):
+                    # If it's a single value, wrap it in a list
+                    gap_data[field] = [gap_data[field]] if gap_data[field] else []
+        
+        # Validate required fields according to schema
+        required_fields = [
+            "user_id", "audit_session_id", "compliance_domain", "gap_type", 
+            "gap_category", "gap_title", "gap_description", "original_question"
+        ]
+        
+        missing_fields = [field for field in required_fields if field not in gap_data or gap_data[field] is None]
+        if missing_fields:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required fields: {', '.join(missing_fields)}"
+            )
+        
+        # Validate enum values
+        valid_gap_types = ['missing_policy', 'outdated_policy', 'low_confidence', 'conflicting_policies', 'incomplete_coverage', 'no_evidence']
+        if gap_data["gap_type"] not in valid_gap_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid gap_type. Must be one of: {', '.join(valid_gap_types)}"
+            )
+        
+        valid_risk_levels = ['low', 'medium', 'high', 'critical']
+        if gap_data["risk_level"] not in valid_risk_levels:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid risk_level. Must be one of: {', '.join(valid_risk_levels)}"
+            )
+        
+        valid_business_impacts = ['low', 'medium', 'high', 'critical']
+        if gap_data["business_impact"] not in valid_business_impacts:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid business_impact. Must be one of: {', '.join(valid_business_impacts)}"
+            )
+
+        nullable_fields = {
+            "chat_history_id", "pdf_ingestion_id", "expected_answer_type", 
+            "similarity_threshold_used", "best_match_score", "potential_fine_amount",
+            "assigned_to", "due_date", "resolution_notes", "recommendation_type",
+            "recommendation_text", "acknowledged_at", "resolved_at", "last_reviewed_at",
+            "ip_address", "user_agent"
+        }
+        
+        filtered_gap_data = {}
+        for key, value in gap_data.items():
+            if value is not None or key in nullable_fields:
+                filtered_gap_data[key] = value
+        
         resp = (
             supabase
             .table(settings.supabase_table_compliance_gaps)
-            .insert(gap_data)
+            .insert(filtered_gap_data)
             .execute()
         )
         

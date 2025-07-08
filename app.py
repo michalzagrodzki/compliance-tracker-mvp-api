@@ -1437,7 +1437,8 @@ def get_compliance_gap(
     status_code=201
 )
 def create_new_compliance_gap(
-    request: Union[ComplianceGapCreate, ComplianceGapFromChatHistoryRequest] = Body(
+    request: Request, 
+    request_data: Union[ComplianceGapCreate, ComplianceGapFromChatHistoryRequest] = Body(
         ..., 
         discriminator="creation_method",
         description="Either a complete gap definition or a reference to chat history"
@@ -1453,16 +1454,19 @@ def create_new_compliance_gap(
     
     The creation_method field in the request body determines which approach is used.
     """
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
     try:
         # Check the creation method
-        if request.creation_method == "from_chat_history":
-            logging.info(f"Creating compliance gap from chat history ID: {request.chat_history_id}")
+        if request_data.creation_method == "from_chat_history":
+            logging.info(f"Creating compliance gap from chat history ID: {request_data.chat_history_id}")
             
-            chat_history = get_chat_history_by_id(request.chat_history_id)
+            chat_history = get_chat_history_by_id(request_data.chat_history_id)
             if not chat_history:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Chat history with ID {request.chat_history_id} not found"
+                    detail=f"Chat history with ID {request_data.chat_history_id} not found"
                 )
             
             search_results = []
@@ -1482,37 +1486,39 @@ def create_new_compliance_gap(
             
             gap_data = {
                 "user_id": current_user.id,
-                "chat_history_id": request.chat_history_id,
-                "audit_session_id": chat_history.get("audit_session_id") or request.audit_session_id,
-                "compliance_domain": chat_history.get("compliance_domain") or request.compliance_domain,
-                "gap_type": request.gap_type,
-                "gap_category": request.gap_category,
-                "gap_title": request.gap_title,
-                "gap_description": request.gap_description,
+                "chat_history_id": request_data.chat_history_id,
+                "audit_session_id": chat_history.get("audit_session_id") or request_data.audit_session_id,
+                "compliance_domain": chat_history.get("compliance_domain") or request_data.compliance_domain,
+                "gap_type": request_data.gap_type,
+                "gap_category": request_data.gap_category,
+                "gap_title": request_data.gap_title,
+                "gap_description": request_data.gap_description,
                 "original_question": chat_history.get("question", ""),
-                "search_terms_used": request.search_terms_used,
+                "search_terms_used": request_data.search_terms_used,
                 "similarity_threshold_used": chat_history.get("match_threshold"),
                 "best_match_score": max([r.get("similarity", 0) for r in search_results], default=0) if search_results else None,
-                "risk_level": request.risk_level,
-                "business_impact": request.business_impact,
-                "regulatory_requirement": request.regulatory_requirement,
-                "potential_fine_amount": request.potential_fine_amount,
-                "recommendation_type": request.recommendation_type,
-                "recommendation_text": request.recommendation_text,
-                "recommended_actions": request.recommended_actions,
-                "related_documents": request.related_documents or chat_history.get("source_document_ids", []),
+                "risk_level": request_data.risk_level,
+                "business_impact": request_data.business_impact,
+                "regulatory_requirement": request_data.regulatory_requirement,
+                "potential_fine_amount": request_data.potential_fine_amount,
+                "recommendation_type": request_data.recommendation_type,
+                "recommendation_text": request_data.recommendation_text,
+                "recommended_actions": request_data.recommended_actions,
+                "related_documents": request_data.related_documents or chat_history.get("source_document_ids", []),
                 "detection_method": "manual_review",  # Since this is created manually from chat history
-                "confidence_score": request.confidence_score,
-                "false_positive_likelihood": request.false_positive_likelihood,
+                "confidence_score": request_data.confidence_score,
+                "false_positive_likelihood": request_data.false_positive_likelihood,
                 "auto_generated": False,
                 "detected_at": datetime.now(timezone.utc),
                 "created_at": datetime.now(timezone.utc),
-                "updated_at": datetime.now(timezone.utc)
+                "updated_at": datetime.now(timezone.utc),
+                "ip_address": ip_address,
+                "user_agent": user_agent,
             }
-        elif request.creation_method == "direct":
-            logging.info(f"Creating compliance gap with title: {request.gap_title}")
+        elif request_data.creation_method == "direct":
+            logging.info(f"Creating compliance gap with title: {request_data.gap_title}")
             
-            gap_data = request.dict(exclude={"creation_method"})
+            gap_data = request_data.dict(exclude={"creation_method"})
             
             if "user_id" not in gap_data or not gap_data["user_id"]:
                 gap_data["user_id"] = current_user.id
@@ -1521,10 +1527,12 @@ def create_new_compliance_gap(
             gap_data["created_at"] = datetime.now(timezone.utc)
             gap_data["updated_at"] = datetime.now(timezone.utc)
             gap_data["auto_generated"] = False
+            gap_data["ip_address"] = ip_address
+            gap_data["user_agent"] = user_agent
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid creation_method: {request.creation_method}"
+                detail=f"Invalid creation_method: {request_data.creation_method}"
             )
         
         created_gap = create_compliance_gap(gap_data)
@@ -1537,7 +1545,9 @@ def create_new_compliance_gap(
                         document_id=doc_id,
                         access_type="reference",
                         audit_session_id=gap_data.get("audit_session_id"),
-                        query_text=gap_data.get("original_question")
+                        query_text=gap_data.get("original_question"),
+                        ip_address=ip_address,
+                        user_agent=user_agent
                     )
             except Exception as e:
                 logging.warning(f"Failed to log document access: {e}")
