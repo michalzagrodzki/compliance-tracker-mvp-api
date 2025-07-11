@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
+import uuid
 from fastapi import HTTPException
 from db.supabase_client import create_supabase_client
 from config.config import settings
@@ -133,13 +134,16 @@ def create_audit_report_version(
         if resp.data:
             next_version = resp.data[0]["version_number"] + 1
         
+        # Serialize UUIDs to strings before creating version
+        serialized_snapshot = serialize_uuids(report_snapshot)
+        
         version_data = {
             "audit_report_id": audit_report_id,
             "version_number": next_version,
             "change_description": change_description,
             "changed_by": changed_by,
             "change_type": change_type,
-            "report_snapshot": report_snapshot,
+            "report_snapshot": serialized_snapshot,  # Use serialized version
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         
@@ -428,3 +432,14 @@ def get_version_history_summary(audit_report_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Failed to get version history summary for report {audit_report_id}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+def serialize_uuids(obj: Any) -> Any:
+    """Convert UUID objects to strings for JSON serialization"""
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {key: serialize_uuids(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_uuids(item) for item in obj]
+    else:
+        return obj

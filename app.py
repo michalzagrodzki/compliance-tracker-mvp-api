@@ -116,7 +116,8 @@ from services.audit_report_versions import (
     compare_audit_report_versions,
     restore_audit_report_version,
     delete_audit_report_version,
-    get_version_history_summary
+    get_version_history_summary,
+    serialize_uuids
 )
 from services.audit_report_distributions import (
     list_audit_report_distributions,
@@ -1743,14 +1744,24 @@ def create_new_audit_report(
     if current_user.role != "admin" and str(report_dict.get("user_id")) != str(current_user.id):
         report_dict["user_id"] = current_user.id
     
+    for field in ["user_id", "audit_session_id"]:
+        if field in report_dict and report_dict[field]:
+            report_dict[field] = str(report_dict[field])
+    
+    for field in ["compliance_gap_ids", "document_ids", "pdf_ingestion_ids"]:
+        if field in report_dict and report_dict[field]:
+            report_dict[field] = [str(uuid_val) for uuid_val in report_dict[field]]
+    
     created_report = create_audit_report(report_dict)
 
+    serialized_report = serialize_uuids(created_report)
+    
     create_audit_report_version(
         audit_report_id=created_report["id"],
         changed_by=str(current_user.id),
         change_description="Initial report creation",
         change_type="draft_update",
-        report_snapshot=created_report
+        report_snapshot=serialized_report
     )
     
     return created_report
