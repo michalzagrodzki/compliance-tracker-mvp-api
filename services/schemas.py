@@ -1,9 +1,35 @@
+from enum import Enum
+from time import timezone
 from pydantic import BaseModel, Field, validator
 from typing import Any, List, Dict, Literal, Optional, Union
 from datetime import datetime
 from uuid import UUID
 from decimal import Decimal
 
+class GapType(str, Enum):
+    MISSING_POLICY = "missing_policy"
+    OUTDATED_POLICY = "outdated_policy"
+    LOW_CONFIDENCE = "low_confidence"
+    CONFLICTING_POLICIES = "conflicting_policies"
+    INCOMPLETE_COVERAGE = "incomplete_coverage"
+    NO_EVIDENCE = "no_evidence"
+
+class RiskLevel(str, Enum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+class PriorityLevel(str, Enum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+class ComplianceImpact(str, Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
 class UploadResponse(BaseModel):
     message: str
     inserted_count: int
@@ -526,6 +552,123 @@ class ComplianceGapFromChatHistoryRequest(BaseModel):
             raise ValueError(f'recommendation_type must be one of: {", ".join(valid_types)}')
         return v
 
+class ComplianceGap(BaseModel):
+    """Model for compliance gaps used in generation methods"""
+    id: Optional[str] = None
+    gap_title: Optional[str] = None
+    gap_description: Optional[str] = None
+    gap_type: Optional[GapType] = None
+    risk_level: Optional[RiskLevel] = None
+    regulatory_requirement: Optional[str] = None
+    compliance_domain: Optional[str] = None
+    assigned_to: Optional[str] = None
+    
+    class Config:
+        use_enum_values = True
+
+class ConversationAnalysis(BaseModel):
+    """Analysis of chat conversation"""
+    total_interactions: int = Field(..., ge=0)
+    unique_documents_referenced: int = Field(..., ge=0)
+    coverage_areas: List[str] = Field(default_factory=list)
+    avg_confidence_score: Optional[float] = Field(None, ge=0, le=1)
+    low_confidence_interactions: int = Field(default=0, ge=0)
+
+class GapsByType(BaseModel):
+    """Gaps grouped by type - Updated to match database schema"""
+    missing_policy: List[ComplianceGap] = Field(default_factory=list)
+    outdated_policy: List[ComplianceGap] = Field(default_factory=list)
+    low_confidence: List[ComplianceGap] = Field(default_factory=list)
+    conflicting_policies: List[ComplianceGap] = Field(default_factory=list)
+    incomplete_coverage: List[ComplianceGap] = Field(default_factory=list)
+    no_evidence: List[ComplianceGap] = Field(default_factory=list)
+
+class GapAnalysis(BaseModel):
+    """Analysis of identified gaps"""
+    gaps_by_type: GapsByType
+    regulatory_gaps: List[ComplianceGap] = Field(default_factory=list)
+    high_confidence_gaps: List[ComplianceGap] = Field(default_factory=list)  # Changed from process_gaps
+    total_gaps: int = Field(..., ge=0)
+    critical_gaps_count: int = Field(default=0, ge=0)
+    high_risk_gaps_count: int = Field(default=0, ge=0)
+
+class DocumentCoverage(BaseModel):
+    """Analysis of document coverage"""
+    documents_accessed: int = Field(..., ge=0)
+    citation_frequency: Dict[str, int] = Field(default_factory=dict)
+    most_referenced_documents: List[str] = Field(default_factory=list)
+    coverage_percentage: Optional[float] = Field(None, ge=0, le=100)
+
+class DetailedFindings(BaseModel):
+    """Complete detailed findings structure"""
+    conversation_analysis: ConversationAnalysis
+    gap_analysis: GapAnalysis
+    document_coverage: DocumentCoverage
+    summary: Optional[str] = None
+    key_insights: List[str] = Field(default_factory=list)
+    
+    class Config:
+        use_enum_values = True
+
+# Recommendation Models
+class GeneratedRecommendation(BaseModel):
+    """Generated recommendation structure"""
+    id: Optional[str] = None
+    title: str = Field(..., max_length=255)
+    description: str
+    priority: PriorityLevel
+    recommendation_type: Optional[GapType] = None  # Based on gap type that triggered it
+    
+    # Implementation details
+    action_items: List[str] = Field(default_factory=list)
+    estimated_effort: Optional[str] = None
+    estimated_cost: Optional[Decimal] = Field(None, ge=0)
+    target_completion_date: Optional[datetime] = None
+    
+    # Impact and compliance
+    compliance_impact: ComplianceImpact
+    affected_gaps: List[str] = Field(default_factory=list)  # Gap IDs this addresses
+    regulatory_requirements: List[str] = Field(default_factory=list)
+    
+    # Risk and business case
+    risk_if_not_implemented: Optional[str] = None
+    business_justification: Optional[str] = None
+    success_metrics: List[str] = Field(default_factory=list)
+    
+    # Metadata
+    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    class Config:
+        use_enum_values = True
+
+# Action Item Models
+class GeneratedActionItem(BaseModel):
+    """Generated action item structure"""
+    id: Optional[str] = None
+    title: str = Field(..., max_length=255)
+    description: str
+    priority: PriorityLevel
+    
+    # Assignment and timeline
+    assigned_to: Optional[str] = None
+    due_date: Optional[datetime] = None
+    estimated_effort: Optional[str] = None
+    
+    # Context and relationships
+    gap_id: Optional[str] = None
+    recommendation_id: Optional[str] = None
+    compliance_domain: Optional[str] = None
+    
+    # Status and progress
+    status: str = Field(default="not_started")
+    progress_percentage: int = Field(default=0, ge=0, le=100)
+    
+    # Metadata
+    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    class Config:
+        use_enum_values = True
+
 class AuditReportCreate(BaseModel):
     """Request model for creating a new audit report"""
     user_id: UUID = Field(..., description="User who is generating the report")
@@ -574,33 +717,112 @@ class AuditReportCreate(BaseModel):
         return v
 
 class AuditReportUpdate(BaseModel):
-    """Request model for updating an audit report"""
+
+    user_id: Optional[UUID] = None
+    audit_session_id: Optional[UUID] = None
+    compliance_domain: Optional[str] = Field(None, max_length=100)
+    
+    # Report metadata
     report_title: Optional[str] = Field(None, max_length=255)
+    report_type: Optional[str] = None
     report_status: Optional[str] = None
+    
+    # Session data references
+    chat_history_ids: Optional[List[int]] = None
+    compliance_gap_ids: Optional[List[UUID]] = None
+    document_ids: Optional[List[UUID]] = None
+    pdf_ingestion_ids: Optional[List[UUID]] = None
+    
+    # Executive summary metrics
+    total_questions_asked: Optional[int] = Field(None, ge=0)
+    questions_answered_satisfactorily: Optional[int] = Field(None, ge=0)
+    total_gaps_identified: Optional[int] = Field(None, ge=0)
+    critical_gaps_count: Optional[int] = Field(None, ge=0)
+    high_risk_gaps_count: Optional[int] = Field(None, ge=0)
+    medium_risk_gaps_count: Optional[int] = Field(None, ge=0)
+    low_risk_gaps_count: Optional[int] = Field(None, ge=0)
+    
+    # Compliance coverage analysis
+    requirements_total: Optional[int] = Field(None, ge=0)
+    requirements_covered: Optional[int] = Field(None, ge=0)
+    coverage_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
+    policy_documents_referenced: Optional[int] = Field(None, ge=0)
+    unique_sources_count: Optional[int] = Field(None, ge=0)
+    
+    # Time and performance metrics
+    session_duration_minutes: Optional[int] = Field(None, ge=0)
+    avg_response_time_ms: Optional[int] = Field(None, ge=0)
+    total_tokens_used: Optional[int] = Field(None, ge=0)
+    total_similarity_searches: Optional[int] = Field(None, ge=0)
+    
+    # Quality metrics
+    avg_confidence_score: Optional[Decimal] = Field(None, ge=0, le=1)
+    low_confidence_answers_count: Optional[int] = Field(None, ge=0)
+    contradictory_findings_count: Optional[int] = Field(None, ge=0)
+    outdated_references_count: Optional[int] = Field(None, ge=0)
+    
+    # Business impact assessment
+    overall_compliance_rating: Optional[str] = None
+    estimated_remediation_cost: Optional[Decimal] = Field(None, ge=0)
+    estimated_remediation_time_days: Optional[int] = Field(None, ge=0)
+    regulatory_risk_score: Optional[int] = Field(None, ge=1, le=10)
+    potential_fine_exposure: Optional[Decimal] = Field(None, ge=0)
+    
+    # Report content and formatting
     executive_summary: Optional[str] = None
-    detailed_findings: Optional[Dict[str, Any]] = None
-    recommendations: Optional[List[Dict[str, Any]]] = None
-    action_items: Optional[List[Dict[str, Any]]] = None
+    detailed_findings: Optional[List[DetailedFindings]] = None
+    recommendations: Optional[List[GeneratedRecommendation]] = None
+    action_items: Optional[List[GeneratedActionItem]] = None
     appendices: Optional[Dict[str, Any]] = None
     
-    # Workflow fields
+    # Report generation settings
+    template_used: Optional[str] = Field(None, max_length=100)
+    include_technical_details: Optional[bool] = None
+    include_source_citations: Optional[bool] = None
+    include_confidence_scores: Optional[bool] = None
+    target_audience: Optional[str] = Field(None, max_length=100)
+    
+    # Distribution and approval workflow
+    generated_by: Optional[UUID] = None
     reviewed_by: Optional[UUID] = None
     approved_by: Optional[UUID] = None
+    distributed_to: Optional[List[str]] = None
+    external_auditor_access: Optional[bool] = None
+    confidentiality_level: Optional[str] = None
+    
+    # Regulatory and audit trail
+    audit_trail: Optional[List[Dict[str, Any]]] = None
     external_audit_reference: Optional[str] = Field(None, max_length=100)
     regulatory_submission_date: Optional[datetime] = None
     regulatory_response_received: Optional[bool] = None
     
-    # File metadata
+    # File and export metadata
     report_file_path: Optional[str] = None
-    report_file_size: Optional[int] = None
+    report_file_size: Optional[int] = Field(None, ge=0)
     report_hash: Optional[str] = Field(None, max_length=64)
     export_formats: Optional[List[str]] = None
     
-    # Comparison fields
+    # Comparison and trending
     previous_report_id: Optional[UUID] = None
     improvement_from_previous: Optional[Decimal] = None
     trending_direction: Optional[str] = None
     benchmark_comparison: Optional[Dict[str, Any]] = None
+    
+    # Integration and automation
+    scheduled_followup_date: Optional[datetime] = None
+    auto_generated: Optional[bool] = None
+    integration_exports: Optional[Dict[str, Any]] = None
+    notification_sent: Optional[bool] = None
+    
+    # Validators
+    @validator('report_type')
+    def validate_report_type(cls, v):
+        if v is None:
+            return v
+        valid_types = ['compliance_audit', 'gap_analysis', 'regulatory_review', 'external_audit', 'internal_review']
+        if v not in valid_types:
+            raise ValueError(f'report_type must be one of: {", ".join(valid_types)}')
+        return v
     
     @validator('report_status')
     def validate_report_status(cls, v):
@@ -611,6 +833,15 @@ class AuditReportUpdate(BaseModel):
             raise ValueError(f'report_status must be one of: {", ".join(valid_statuses)}')
         return v
     
+    @validator('overall_compliance_rating')
+    def validate_compliance_rating(cls, v):
+        if v is None:
+            return v
+        valid_ratings = ['excellent', 'good', 'fair', 'poor', 'critical']
+        if v not in valid_ratings:
+            raise ValueError(f'overall_compliance_rating must be one of: {", ".join(valid_ratings)}')
+        return v
+    
     @validator('trending_direction')
     def validate_trending_direction(cls, v):
         if v is None:
@@ -619,6 +850,146 @@ class AuditReportUpdate(BaseModel):
         if v not in valid_directions:
             raise ValueError(f'trending_direction must be one of: {", ".join(valid_directions)}')
         return v
+    
+    @validator('confidentiality_level')
+    def validate_confidentiality_level(cls, v):
+        if v is None:
+            return v
+        valid_levels = ['public', 'internal', 'confidential', 'restricted']
+        if v not in valid_levels:
+            raise ValueError(f'confidentiality_level must be one of: {", ".join(valid_levels)}')
+        return v
+    
+    @validator('target_audience')
+    def validate_target_audience(cls, v):
+        if v is None:
+            return v
+        # These are common values, but you may want to make this more flexible
+        valid_audiences = ['executives', 'compliance_team', 'auditors', 'regulators', 'management', 'board']
+        if v not in valid_audiences:
+            # Allow custom audiences but log a warning
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Custom target_audience used: {v}")
+        return v
+    
+    @validator('detailed_findings')
+    def validate_detailed_findings(cls, v):
+        """Validate detailed findings - accept both dict and structured object"""
+        if v is None:
+            return v
+        
+        if isinstance(v, DetailedFindings):
+            return v
+        elif isinstance(v, dict):
+            # Try to convert dict to structured object
+            try:
+                return DetailedFindings(**v)
+            except Exception:
+                # If conversion fails, return as dict for backward compatibility
+                return v
+        elif isinstance(v, list):
+            # Legacy format - convert to dict structure
+            return {
+                "findings": v,
+                "metadata": {"converted_from_legacy": True}
+            }
+        else:
+            raise ValueError("detailed_findings must be a dict, list, or DetailedFindings object")
+    
+    @validator('recommendations')
+    def validate_recommendations(cls, v):
+        """Validate recommendations - accept both dict list and structured objects"""
+        if v is None:
+            return v
+        
+        if isinstance(v, list):
+            validated_recommendations = []
+            for item in v:
+                if isinstance(item, GeneratedRecommendation):
+                    validated_recommendations.append(item)
+                elif isinstance(item, dict):
+                    # Try to convert dict to structured object
+                    try:
+                        validated_recommendations.append(GeneratedRecommendation(**item))
+                    except Exception:
+                        # If conversion fails, keep as dict for backward compatibility
+                        validated_recommendations.append(item)
+                else:
+                    raise ValueError("Each recommendation must be a dict or GeneratedRecommendation object")
+            return validated_recommendations
+        else:
+            raise ValueError("recommendations must be a list")
+    
+    @validator('action_items')
+    def validate_action_items(cls, v):
+        """Validate action items - accept both dict list and structured objects"""
+        if v is None:
+            return v
+        
+        if isinstance(v, list):
+            validated_action_items = []
+            for item in v:
+                if isinstance(item, GeneratedActionItem):
+                    validated_action_items.append(item)
+                elif isinstance(item, dict):
+                    # Try to convert dict to structured object
+                    try:
+                        validated_action_items.append(GeneratedActionItem(**item))
+                    except Exception:
+                        # If conversion fails, keep as dict for backward compatibility
+                        validated_action_items.append(item)
+                else:
+                    raise ValueError("Each action item must be a dict or GeneratedActionItem object")
+            return validated_action_items
+        else:
+            raise ValueError("action_items must be a list")
+    
+    @validator('distributed_to')
+    def validate_distributed_to(cls, v):
+        if v is None:
+            return v
+        # Basic email validation for distributed_to list
+        import re
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        for email in v:
+            if not re.match(email_pattern, email):
+                raise ValueError(f'Invalid email address in distributed_to: {email}')
+        return v
+    
+    @validator('regulatory_submission_date', 'scheduled_followup_date')
+    def validate_future_dates(cls, v):
+        if v is None:
+            return v
+        # You might want to allow past dates for regulatory_submission_date
+        # but ensure scheduled_followup_date is reasonable
+        return v
+    
+    @validator('questions_answered_satisfactorily')
+    def validate_questions_answered(cls, v, values):
+        if v is None:
+            return v
+        total_questions = values.get('total_questions_asked')
+        if total_questions is not None and v > total_questions:
+            raise ValueError('questions_answered_satisfactorily cannot exceed total_questions_asked')
+        return v
+    
+    @validator('requirements_covered')
+    def validate_requirements_covered(cls, v, values):
+        if v is None:
+            return v
+        total_requirements = values.get('requirements_total')
+        if total_requirements is not None and v > total_requirements:
+            raise ValueError('requirements_covered cannot exceed requirements_total')
+        return v
+    
+    class Config:
+        # Allow extra fields in case you need to extend without breaking existing code
+        extra = "forbid"
+        # Use enum values for validation
+        use_enum_values = True
+        # Validate assignment to catch errors early
+        validate_assignment = True
 
 class AuditReportResponse(BaseModel):
     """Response model for audit report data"""

@@ -2,15 +2,17 @@ import logging
 import json
 import hashlib
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from fastapi import HTTPException
+from pydantic import ValidationError
 from db.supabase_client import create_supabase_client
 from config.config import settings
 from services.audit_report_versions import create_audit_report_version
 from services.compliance_gaps import get_gaps_by_audit_session, get_compliance_gaps_statistics
 from services.chat_history import get_audit_session_history
 from services.audit_sessions import get_audit_session_by_id
+from services.schemas import AuditReportResponse, AuditReportUpdate, AuditReportVersionCreate, ChatHistoryItem, ComplianceGap, ComplianceImpact, ConversationAnalysis, DetailedFindings, DocumentCoverage, GapAnalysis, GapType, GapsByType, GeneratedActionItem, GeneratedRecommendation, PriorityLevel, RiskLevel
 
 logger = logging.getLogger(__name__)
 supabase = create_supabase_client()
@@ -298,85 +300,237 @@ def _generate_executive_summary(session_data, chat_history, gaps, gap_risk_count
     
     return summary.strip()
 
-def _generate_detailed_findings(chat_history, gaps, document_ids) -> Dict[str, Any]:
-    return {
-        "conversation_analysis": {
-            "total_interactions": len(chat_history),
-            "unique_documents_referenced": len(document_ids),
-            "coverage_areas": list(set(item.get("compliance_domain") for item in chat_history if item.get("compliance_domain")))
-        },
-        "gap_analysis": {
-            "gaps_by_type": _group_gaps_by_type(gaps),
-            "regulatory_gaps": [gap for gap in gaps if gap.get("regulatory_requirement")],
-            "process_gaps": [gap for gap in gaps if gap.get("gap_type") == "missing_policy"]
-        },
-        "document_coverage": {
-            "documents_accessed": len(document_ids),
-            "citation_frequency": {}  # Could be enhanced with actual citation counts
-        }
-    }
+def _generate_detailed_findings(
+    chat_history: List[ChatHistoryItem], 
+    gaps: List[ComplianceGap], 
+    document_ids: List[str]
+) -> DetailedFindings:
+    """Generate detailed findings with proper structure"""
+    
+    # Conversation analysis
+    coverage_areas = list(set(
+        item.compliance_domain for item in chat_history 
+        if item.compliance_domain
+    ))
+    
+    avg_confidence = None
+    low_confidence_count = 0
+    if chat_history:
+        confidence_scores = [
+            item.confidence_score for item in chat_history 
+            if item.confidence_score is not None
+        ]
+        if confidence_scores:
+            avg_confidence = sum(confidence_scores) / len(confidence_scores)
+            low_confidence_count = len([s for s in confidence_scores if s < 0.7])
+    
+    conversation_analysis = ConversationAnalysis(
+        total_interactions=len(chat_history),
+        unique_documents_referenced=len(document_ids),
+        coverage_areas=coverage_areas,
+        avg_confidence_score=avg_confidence,
+        low_confidence_interactions=low_confidence_count
+    )
+    
+    # Gap analysis
+    gaps_by_type = _group_gaps_by_type(gaps)
+    regulatory_gaps = [gap for gap in gaps if gap.regulatory_requirement]
+    high_confidence_gaps = [gap for gap in gaps if gap.gap_type != GapType.LOW_CONFIDENCE]
+    
+    gap_analysis = GapAnalysis(
+        gaps_by_type=gaps_by_type,
+        regulatory_gaps=regulatory_gaps,
+        high_confidence_gaps=high_confidence_gaps,
+        total_gaps=len(gaps),
+        critical_gaps_count=len([g for g in gaps if g.risk_level == RiskLevel.CRITICAL]),
+        high_risk_gaps_count=len([g for g in gaps if g.risk_level == RiskLevel.HIGH])
+    )
+    
+    # Document coverage
+    document_coverage = DocumentCoverage(
+        documents_accessed=len(document_ids),
+        citation_frequency={}  # Could be enhanced with actual citation counts
+    )
+    
+    # Generate summary and insights
+    summary = f"Analysis of {len(chat_history)} interactions identified {len(gaps)} compliance gaps across {len(coverage_areas)} domains."
+    
+    key_insights = []
+    if gap_analysis.critical_gaps_count > 0:
+        key_insights.append(f"{gap_analysis.critical_gaps_count} critical gaps require immediate attention")
+    if avg_confidence and avg_confidence < 0.8:
+        key_insights.append(f"Average confidence score of {avg_confidence:.2f} suggests need for better documentation")
+    
+    return DetailedFindings(
+        conversation_analysis=conversation_analysis,
+        gap_analysis=gap_analysis,
+        document_coverage=document_coverage,
+        summary=summary,
+        key_insights=key_insights
+    )
 
-def _generate_recommendations(gaps, session_data) -> List[Dict[str, Any]]:
+def _generate_recommendations(
+    gaps: List[ComplianceGap], 
+    session_data: Dict[str, Any]
+) -> List[GeneratedRecommendation]:
+    """Generate recommendations with proper structure"""
     recommendations = []
-
+    
+    # Group gaps by type
     gap_types = {}
     for gap in gaps:
-        gap_type = gap.get("gap_type", "other")
+        gap_type = gap.gap_type or GapType.NO_EVIDENCE  # Default to no_evidence instead of OTHER
         if gap_type not in gap_types:
             gap_types[gap_type] = []
         gap_types[gap_type].append(gap)
-
+    
     for gap_type, type_gaps in gap_types.items():
-        high_priority_gaps = [g for g in type_gaps if g.get("risk_level") in ["critical", "high"]]
+        high_priority_gaps = [g for g in type_gaps if g.risk_level in [RiskLevel.CRITICAL, RiskLevel.HIGH]]
         
-        if gap_type == "missing_policy":
-            recommendations.append({
-                "priority": "high" if high_priority_gaps else "medium",
-                "title": "Develop Missing Policies",
-                "description": f"Create {len(type_gaps)} missing policy documents",
-                "action_items": [f"Draft policy for: {gap.get('gap_title')}" for gap in type_gaps[:3]],
-                "estimated_effort": f"{len(type_gaps) * 2} weeks",
-                "compliance_impact": "high"
-            })
-        elif gap_type == "outdated_policy":
-            recommendations.append({
-                "priority": "medium",
-                "title": "Update Outdated Policies",
-                "description": f"Review and update {len(type_gaps)} outdated policies",
-                "action_items": [f"Update: {gap.get('gap_title')}" for gap in type_gaps[:3]],
-                "estimated_effort": f"{len(type_gaps)} weeks",
-                "compliance_impact": "medium"
-            })
+        if gap_type == GapType.MISSING_POLICY:
+            recommendations.append(GeneratedRecommendation(
+                title="Develop Missing Policies",
+                description=f"Create {len(type_gaps)} missing policy documents to address compliance gaps",
+                priority=PriorityLevel.HIGH if high_priority_gaps else PriorityLevel.MEDIUM,
+                recommendation_type=gap_type,
+                action_items=[f"Draft policy for: {gap.gap_title}" for gap in type_gaps[:3]],
+                estimated_effort=f"{len(type_gaps) * 2} weeks",
+                compliance_impact=ComplianceImpact.HIGH,
+                affected_gaps=[gap.id for gap in type_gaps if gap.id],
+                regulatory_requirements=[gap.regulatory_requirement for gap in type_gaps if gap.regulatory_requirement],
+                business_justification=f"Addressing {len(type_gaps)} policy gaps will reduce regulatory risk",
+                success_metrics=[
+                    f"All {len(type_gaps)} policies drafted and approved",
+                    "100% compliance coverage for affected domains"
+                ]
+            ))
+        
+        elif gap_type == GapType.OUTDATED_POLICY:
+            recommendations.append(GeneratedRecommendation(
+                title="Update Outdated Policies",
+                description=f"Review and update {len(type_gaps)} outdated policies to current standards",
+                priority=PriorityLevel.MEDIUM,
+                recommendation_type=gap_type,
+                action_items=[f"Update: {gap.gap_title}" for gap in type_gaps[:3]],
+                estimated_effort=f"{len(type_gaps)} weeks",
+                compliance_impact=ComplianceImpact.MEDIUM,
+                affected_gaps=[gap.id for gap in type_gaps if gap.id],
+                regulatory_requirements=[gap.regulatory_requirement for gap in type_gaps if gap.regulatory_requirement],
+                business_justification=f"Updating {len(type_gaps)} policies will maintain current compliance",
+                success_metrics=[
+                    f"All {len(type_gaps)} policies updated to current standards",
+                    "Reduced compliance risk by 30%"
+                ]
+            ))
+        
+        elif gap_type == GapType.LOW_CONFIDENCE:
+            recommendations.append(GeneratedRecommendation(
+                title="Improve Documentation Quality",
+                description=f"Enhance documentation for {len(type_gaps)} areas with low confidence scores",
+                priority=PriorityLevel.MEDIUM,
+                recommendation_type=gap_type,
+                action_items=[f"Improve documentation for: {gap.gap_title}" for gap in type_gaps[:3]],
+                estimated_effort=f"{len(type_gaps) * 1.5} weeks",
+                compliance_impact=ComplianceImpact.MEDIUM,
+                affected_gaps=[gap.id for gap in type_gaps if gap.id],
+                regulatory_requirements=[gap.regulatory_requirement for gap in type_gaps if gap.regulatory_requirement],
+                business_justification="Better documentation will improve compliance confidence and reduce audit risk",
+                success_metrics=[
+                    f"Confidence scores improved to >80% for all {len(type_gaps)} areas",
+                    "Reduced time to find compliance information by 50%"
+                ]
+            ))
+        
+        elif gap_type == GapType.CONFLICTING_POLICIES:
+            recommendations.append(GeneratedRecommendation(
+                title="Resolve Policy Conflicts",
+                description=f"Address {len(type_gaps)} conflicting policy requirements",
+                priority=PriorityLevel.HIGH,
+                recommendation_type=gap_type,
+                action_items=[f"Resolve conflict in: {gap.gap_title}" for gap in type_gaps[:3]],
+                estimated_effort=f"{len(type_gaps) * 2} weeks",
+                compliance_impact=ComplianceImpact.HIGH,
+                affected_gaps=[gap.id for gap in type_gaps if gap.id],
+                regulatory_requirements=[gap.regulatory_requirement for gap in type_gaps if gap.regulatory_requirement],
+                risk_if_not_implemented="Policy conflicts can lead to compliance failures and audit findings",
+                business_justification="Resolving conflicts ensures clear, consistent compliance requirements",
+                success_metrics=[
+                    f"All {len(type_gaps)} policy conflicts resolved",
+                    "Single source of truth established for each compliance area"
+                ]
+            ))
+        
+        elif gap_type == GapType.INCOMPLETE_COVERAGE:
+            recommendations.append(GeneratedRecommendation(
+                title="Complete Compliance Coverage",
+                description=f"Address {len(type_gaps)} areas with incomplete compliance coverage",
+                priority=PriorityLevel.HIGH,
+                recommendation_type=gap_type,
+                action_items=[f"Complete coverage for: {gap.gap_title}" for gap in type_gaps[:3]],
+                estimated_effort=f"{len(type_gaps) * 3} weeks",
+                compliance_impact=ComplianceImpact.HIGH,
+                affected_gaps=[gap.id for gap in type_gaps if gap.id],
+                regulatory_requirements=[gap.regulatory_requirement for gap in type_gaps if gap.regulatory_requirement],
+                risk_if_not_implemented="Incomplete coverage creates regulatory vulnerabilities",
+                business_justification="Complete coverage ensures full regulatory compliance",
+                success_metrics=[
+                    f"100% coverage achieved for all {len(type_gaps)} areas",
+                    "All regulatory requirements fully addressed"
+                ]
+            ))
+        
+        elif gap_type == GapType.NO_EVIDENCE:
+            recommendations.append(GeneratedRecommendation(
+                title="Establish Evidence Documentation",
+                description=f"Create evidence documentation for {len(type_gaps)} compliance areas",
+                priority=PriorityLevel.HIGH,
+                recommendation_type=gap_type,
+                action_items=[f"Document evidence for: {gap.gap_title}" for gap in type_gaps[:3]],
+                estimated_effort=f"{len(type_gaps) * 2} weeks",
+                compliance_impact=ComplianceImpact.HIGH,
+                affected_gaps=[gap.id for gap in type_gaps if gap.id],
+                regulatory_requirements=[gap.regulatory_requirement for gap in type_gaps if gap.regulatory_requirement],
+                risk_if_not_implemented="Lack of evidence documentation creates audit risks",
+                business_justification="Proper evidence documentation is essential for compliance verification",
+                success_metrics=[
+                    f"Evidence documentation established for all {len(type_gaps)} areas",
+                    "Audit readiness score improved to >95%"
+                ]
+            ))
     
     return recommendations
 
-def _generate_action_items(gaps) -> List[Dict[str, Any]]:
+def _generate_action_items(gaps: List[ComplianceGap]) -> List[GeneratedActionItem]:
     action_items = []
-
-    critical_gaps = [g for g in gaps if g.get("risk_level") == "critical"]
-    high_gaps = [g for g in gaps if g.get("risk_level") == "high"]
-
+    
+    critical_gaps = [g for g in gaps if g.risk_level == RiskLevel.CRITICAL]
+    high_gaps = [g for g in gaps if g.risk_level == RiskLevel.HIGH]
+    
     for gap in critical_gaps:
-        action_items.append({
-            "title": f"URGENT: {gap.get('gap_title', 'Critical Gap')}",
-            "description": gap.get("gap_description", ""),
-            "priority": "critical",
-            "due_date": (datetime.now(timezone.utc) + timezone.timedelta(days=7)).isoformat(),
-            "assigned_to": gap.get("assigned_to"),
-            "gap_id": gap.get("id"),
-            "estimated_effort": "immediate"
-        })
-
-    for gap in high_gaps[:5]:  # Limit to top 5 high-priority gaps
-        action_items.append({
-            "title": gap.get("gap_title", "High Priority Gap"),
-            "description": gap.get("gap_description", ""),
-            "priority": "high",
-            "due_date": (datetime.now(timezone.utc) + timezone.timedelta(days=30)).isoformat(),
-            "assigned_to": gap.get("assigned_to"),
-            "gap_id": gap.get("id"),
-            "estimated_effort": "2-4 weeks"
-        })
+        action_items.append(GeneratedActionItem(
+            title=f"URGENT: {gap.gap_title or 'Critical Gap'}",
+            description=gap.gap_description or "Address critical compliance gap immediately",
+            priority=PriorityLevel.CRITICAL,
+            assigned_to=gap.assigned_to,
+            due_date=datetime.now(timezone.utc) + timedelta(days=7),
+            estimated_effort="immediate",
+            gap_id=gap.id,
+            compliance_domain=gap.compliance_domain,
+            status="not_started"
+        ))
+    
+    for gap in high_gaps[:5]:
+        action_items.append(GeneratedActionItem(
+            title=gap.gap_title or "High Priority Gap",
+            description=gap.gap_description or "Address high-priority compliance gap",
+            priority=PriorityLevel.HIGH,
+            assigned_to=gap.assigned_to,
+            due_date=datetime.now(timezone.utc) + timedelta(days=30),
+            estimated_effort="2-4 weeks",
+            gap_id=gap.id,
+            compliance_domain=gap.compliance_domain,
+            status="not_started"
+        ))
     
     return action_items
 
@@ -417,13 +571,25 @@ def _calculate_risk_score(gaps) -> int:
     
     return min(10, score)
 
-def _group_gaps_by_type(gaps) -> Dict[str, List[Dict[str, Any]]]:
-    grouped = {}
+def _group_gaps_by_type(gaps: List[ComplianceGap]) -> GapsByType:
+    grouped = GapsByType()
+    
     for gap in gaps:
-        gap_type = gap.get("gap_type", "other")
-        if gap_type not in grouped:
-            grouped[gap_type] = []
-        grouped[gap_type].append(gap)
+        gap_type = gap.gap_type or GapType.NO_EVIDENCE
+        
+        if gap_type == GapType.MISSING_POLICY:
+            grouped.missing_policy.append(gap)
+        elif gap_type == GapType.OUTDATED_POLICY:
+            grouped.outdated_policy.append(gap)
+        elif gap_type == GapType.LOW_CONFIDENCE:
+            grouped.low_confidence.append(gap)
+        elif gap_type == GapType.CONFLICTING_POLICIES:
+            grouped.conflicting_policies.append(gap)
+        elif gap_type == GapType.INCOMPLETE_COVERAGE:
+            grouped.incomplete_coverage.append(gap)
+        elif gap_type == GapType.NO_EVIDENCE:
+            grouped.no_evidence.append(gap)
+    
     return grouped
 
 def get_audit_report_statistics(
@@ -598,30 +764,76 @@ def create_audit_report(report_data: Dict[str, Any]) -> Dict[str, Any]:
         logger.error("Failed to create audit report", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
-def update_audit_report(report_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
+def update_audit_report(
+    report_id: str, 
+    update_data: Dict[str, Any], 
+    user_id: Optional[str] = None,
+    create_version: bool = False,
+    change_description: Optional[str] = None,
+    change_type: str = "draft_update"
+) -> AuditReportResponse:
     try:
-        logger.info(f"Updating audit report {report_id}")
-
-        update_data["last_modified_at"] = datetime.now(timezone.utc).isoformat()
-        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-
-        if "report_status" in update_data:
-            if update_data["report_status"] == "finalized" and "report_finalized_at" not in update_data:
-                update_data["report_finalized_at"] = datetime.now(timezone.utc).isoformat()
-
-        for key, value in update_data.items():
-            if isinstance(value, Decimal):
-                update_data[key] = float(value)
-
-        filtered_update_data = {k: v for k, v in update_data.items() if v is not None}
+        logger.info(f"Updating audit report {report_id} with data: {list(update_data.keys())}")
         
-        if not filtered_update_data:
+        # Step 1: Validate the incoming update data using your Pydantic model
+        try:
+            validated_update = AuditReportUpdate(**update_data)
+        except ValidationError as e:
+            logger.error(f"Validation error for update data: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Validation error: {e.errors()}"
+            )
+        
+        # Step 2: Get current report data if creating a version
+        current_report = None
+        if create_version:
+            current_report = _get_current_report(report_id)
+            if change_description is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="change_description is required when create_version=True"
+                )
+        
+        # Step 3: Convert validated model to dict, excluding None values
+        processed_data = validated_update.dict(exclude_none=True)
+        
+        # Step 4: Handle special data type conversions for Supabase
+        processed_data = _process_data_for_supabase(processed_data)
+        
+        # Step 5: Always update modification timestamps
+        now_iso = datetime.now(timezone.utc).isoformat()
+        processed_data["last_modified_at"] = now_iso
+        processed_data["updated_at"] = now_iso
+        
+        # Step 6: Auto-set report_finalized_at if status is changing to finalized
+        if processed_data.get("report_status") == "finalized" and "report_finalized_at" not in processed_data:
+            processed_data["report_finalized_at"] = now_iso
+        
+        # Step 7: Update audit trail if user_id provided
+        if user_id:
+            processed_data = _update_audit_trail(processed_data, user_id, change_description or "Report updated")
+        
+        # Step 8: Create version snapshot if requested
+        if create_version and current_report:
+            _create_report_version(
+                report_id=report_id,
+                current_data=current_report,
+                user_id=user_id,
+                change_description=change_description,
+                change_type=change_type
+            )
+        
+        # Step 9: Perform the database update
+        if not processed_data:
             raise HTTPException(status_code=400, detail="No valid update data provided")
         
-        resp = supabase.table(settings.supabase_table_audit_reports).update(filtered_update_data).eq("id", report_id).execute()
+        logger.info(f"Processed fields for update: {list(processed_data.keys())}")
+        
+        resp = supabase.table(settings.supabase_table_audit_reports).update(processed_data).eq("id", report_id).execute()
         
         if hasattr(resp, "error") and resp.error:
-            logger.error("Supabase audit report update failed", exc_info=True)
+            logger.error(f"Supabase audit report update failed: {resp.error}", exc_info=True)
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to update audit report: {resp.error.message}"
@@ -630,11 +842,128 @@ def update_audit_report(report_id: str, update_data: Dict[str, Any]) -> Dict[str
         if not resp.data:
             raise HTTPException(status_code=404, detail=f"Audit report {report_id} not found")
         
-        logger.info(f"Updated audit report {report_id}")
-        return resp.data[0]
+        # Step 10: Convert response to Pydantic model
+        try:
+            updated_report = AuditReportResponse(**resp.data[0])
+            logger.info(f"Successfully updated audit report {report_id}")
+            return updated_report
+        except ValidationError as e:
+            logger.error(f"Response validation error: {e}")
+            # Still return the raw data if model validation fails
+            return resp.data[0]
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to update audit report {report_id}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+        logger.error(f"Failed to update audit report {report_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+def _process_data_for_supabase(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Process validated data for Supabase compatibility.
+    """
+    processed = {}
+    
+    for key, value in data.items():
+        if value is None:
+            continue
+            
+        # Handle datetime objects
+        if isinstance(value, datetime):
+            processed[key] = value.isoformat()
+        # Handle Decimal objects
+        elif isinstance(value, Decimal):
+            processed[key] = float(value)
+        # Handle complex objects (dicts, lists) - Supabase handles JSON automatically
+        elif isinstance(value, (dict, list)):
+            processed[key] = value
+        else:
+            processed[key] = value
+    
+    return processed
+
+def _update_audit_trail(data: Dict[str, Any], user_id: str, change_description: str) -> Dict[str, Any]:
+    """
+    Add an entry to the audit trail.
+    """
+    # Get current audit trail or initialize empty list
+    current_trail = data.get("audit_trail", [])
+    
+    # Add new audit entry
+    new_entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "user_id": user_id,
+        "action": "update",
+        "description": change_description,
+        "fields_changed": list(data.keys())
+    }
+    
+    current_trail.append(new_entry)
+    data["audit_trail"] = current_trail
+    
+    return data
+
+
+def _get_current_report(report_id: str) -> Dict[str, Any]:
+    """
+    Get the current state of a report for versioning.
+    """
+    resp = supabase.table(settings.supabase_table_audit_reports).select("*").eq("id", report_id).execute()
+    
+    if hasattr(resp, "error") and resp.error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get current report: {resp.error.message}"
+        )
+    
+    if not resp.data:
+        raise HTTPException(status_code=404, detail=f"Audit report {report_id} not found")
+    
+    return resp.data[0]
+
+def _create_report_version(
+    report_id: str,
+    current_data: Dict[str, Any],
+    user_id: Optional[str],
+    change_description: str,
+    change_type: str
+) -> None:
+    """
+    Create a version snapshot of the report before updating.
+    """
+    try:
+        # Validate the version creation request
+        version_request = AuditReportVersionCreate(
+            change_description=change_description,
+            change_type=change_type
+        )
+        
+        # Get the next version number
+        version_resp = supabase.table("audit_report_versions").select("version_number").eq("audit_report_id", report_id).order("version_number", desc=True).limit(1).execute()
+        
+        next_version = 1
+        if version_resp.data:
+            next_version = version_resp.data[0]["version_number"] + 1
+        
+        # Create version record
+        version_data = {
+            "audit_report_id": report_id,
+            "version_number": next_version,
+            "change_description": version_request.change_description,
+            "changed_by": user_id,
+            "change_type": version_request.change_type,
+            "report_snapshot": current_data,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        version_resp = supabase.table("audit_report_versions").insert(version_data).execute()
+        
+        if hasattr(version_resp, "error") and version_resp.error:
+            logger.error(f"Failed to create report version: {version_resp.error}")
+            # Don't fail the main update if versioning fails, just log it
+        else:
+            logger.info(f"Created version {next_version} for report {report_id}")
+            
+    except Exception as e:
+        logger.error(f"Error creating report version: {e}")
+        # Don't fail the main update if versioning fails
