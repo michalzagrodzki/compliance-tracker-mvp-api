@@ -30,6 +30,18 @@ class ComplianceImpact(str, Enum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
+
+class SummaryType(str, Enum):
+    STANDARD = "standard"
+    BRIEF = "brief"
+    DETAILED = "detailed"
+
+class ConfidentialityLevel(str, Enum):
+    INTERNAL = "internal"
+    CONFIDENTIAL = "confidential"
+    RESTRICTED = "restricted"
+    PUBLIC = "public"
+
 class UploadResponse(BaseModel):
     message: str
     inserted_count: int
@@ -1394,6 +1406,30 @@ class AuditReportAccessLogRequest(BaseModel):
     access_ip_address: Optional[str] = Field(None, description="IP address of accessor")
     user_agent: Optional[str] = Field(None, description="User agent string")
 
+class ExecutiveSummaryRequest(BaseModel):
+    """Request model for executive summary generation"""
+    audit_report: AuditReportCreate
+    compliance_gaps: List[ComplianceGap]
+    summary_type: SummaryType = SummaryType.STANDARD
+    custom_instructions: Optional[str] = Field(
+        None, 
+        description="Optional custom instructions for summary generation"
+    )
+
+class ExecutiveSummaryResponse(BaseModel):
+    """Response model for executive summary"""
+    executive_summary: str = Field(description="Generated executive summary in markdown format")
+    audit_session_id: UUID
+    compliance_domain: str
+    total_gaps: int
+    high_risk_gaps: int
+    medium_risk_gaps: int
+    low_risk_gaps: int
+    regulatory_gaps: int
+    potential_financial_impact: float
+    generation_metadata: Dict[str, Any] = Field(
+        description="Metadata about the summary generation process"
+    )
 class AuditSessionPdfIngestionRelationship(BaseModel):
     id: UUID = Field(..., description="Unique relationship identifier")
     audit_session_id: UUID = Field(..., description="Audit session ID")
@@ -1584,6 +1620,8 @@ class ComplianceCoverageAnalysis(BaseModel):
     coverage_gaps: List[str] = Field(description="Domains that might need more documentation")
     coverage_score: float = Field(ge=0, le=1, description="Overall coverage score (0-1)")
     recommendations: List[str] = Field(description="Recommendations for improving coverage")
+
+
 
 class DocumentTagConstants:    
     DOCUMENT_TYPES = {

@@ -114,4 +114,8 @@ tags_metadata = [
         "name": "Audit",
         "description": "Audit trail and access logging.",
     },
+    {
+        "name": "Summary",
+        "description": "Context summary of structured data.",
+    },
 ]
