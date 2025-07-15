@@ -690,6 +690,12 @@ class AuditReportCreate(BaseModel):
     include_confidence_scores: bool = Field(False, description="Include confidence scores")
     target_audience: str = Field("compliance_team", description="Target audience for the report")
     template_used: Optional[str] = Field(None, max_length=100, description="Report template identifier")
+
+    # Report summary
+    executive_summary: Optional[str] = Field(None, description="Executive audience summary")
+    control_risk_prioritization: Optional[str] = Field(None, description="Control risk prioritization summary")
+    threat_intelligence_analysis: Optional[str] = Field(None, description="Threat intelligence analysis summary")
+    target_audience_summary: Optional[str] = Field(None, description="Target audience summary")
     
     # Distribution settings
     confidentiality_level: str = Field("internal", description="Confidentiality classification")
@@ -770,6 +776,9 @@ class AuditReportUpdate(BaseModel):
     
     # Report content and formatting
     executive_summary: Optional[str] = None
+    control_risk_prioritization: Optional[str] = None
+    threat_intelligence_analysis: Optional[str] = None
+    target_audience_summary: Optional[str] = None
     detailed_findings: Optional[List[DetailedFindings]] = None
     recommendations: Optional[List[GeneratedRecommendation]] = None
     action_items: Optional[List[GeneratedActionItem]] = None
@@ -1045,6 +1054,9 @@ class AuditReportResponse(BaseModel):
     
     # Report content
     executive_summary: Optional[str] = None
+    control_risk_prioritization: Optional[str] = None
+    threat_intelligence_analysis: Optional[str] = None
+    target_audience_summary: Optional[str] = None
     detailed_findings: Dict[str, Any] = Field(default_factory=dict)
     recommendations: List[Dict[str, Any]] = Field(default_factory=list)
     action_items: List[Dict[str, Any]] = Field(default_factory=list)
