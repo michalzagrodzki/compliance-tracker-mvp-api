@@ -17,7 +17,7 @@ from services.document import (
     get_documents_by_version,
     get_documents_by_domain_and_version
 )
-from services.executive_summary import generate_executive_summary
+from services.executive_summary import generate_executive_summary, generate_executive_summary_debug
 from services.schemas import (
     AuditSessionCreateResponse,
     AuditSessionPdfIngestionBulkCreate,
@@ -141,6 +141,7 @@ from services.audit_report_distributions import (
 from datetime import datetime, time, timezone
 from services.audit_sessions import ( delete_audit_session, get_audit_session_statistics )
 from services.user_management import UserUpdate, activate_user, deactivate_user, get_user_by_id, get_users_by_compliance_domain, get_users_by_role, list_users, update_user
+import time
 
 logging.basicConfig(
     level=logging.DEBUG,  # or DEBUG
@@ -590,7 +591,6 @@ def create_executive_summary(
 
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
-
     if req.audit_report.audit_session_id != req.compliance_gaps[0].audit_session_id if req.compliance_gaps else True:
         if req.compliance_gaps:
             mismatched_gaps = [
@@ -611,7 +611,6 @@ def create_executive_summary(
             audit_report=audit_report_dict,
             compliance_gaps=compliance_gaps_list,
             summary_type=req.summary_type.value,
-            custom_instructions=req.custom_instructions
         )
     except HTTPException:
         raise
@@ -629,19 +628,20 @@ def create_executive_summary(
     medium_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == RiskLevel.MEDIUM])
     low_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == RiskLevel.LOW])
     regulatory_gaps = len([gap for gap in req.compliance_gaps if gap.regulatory_requirement])
-    potential_financial_impact = sum(gap.potential_fine_amount for gap in req.compliance_gaps)
+    potential_financial_impact = sum(
+        float(gap.potential_fine_amount) if gap.potential_fine_amount is not None else 0.0
+        for gap in req.compliance_gaps
+    )
 
     generation_metadata = {
         "generation_time_ms": response_time_ms,
         "summary_type": req.summary_type.value,
-        "has_custom_instructions": bool(req.custom_instructions),
-        "custom_instructions_length": len(req.custom_instructions) if req.custom_instructions else 0,
         "ip_address": ip_address,
         "user_agent": user_agent,
         "openai_model": settings.openai_model,
         "audit_report_title": req.audit_report.report_title,
         "target_audience": req.audit_report.target_audience,
-        "confidentiality_level": req.audit_report.confidentiality_level.value,
+        "confidentiality_level": req.audit_report.confidentiality_level,
         "documents_reviewed": len(req.audit_report.document_ids),
         "chat_sessions": len(req.audit_report.chat_history_ids),
         "pdf_sources": len(req.audit_report.pdf_ingestion_ids),

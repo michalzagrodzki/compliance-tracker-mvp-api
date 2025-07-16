@@ -283,6 +283,27 @@ class ComplianceGapCreate(ComplianceGapBase):
             raise ValueError(f'recommendation_type must be one of: {", ".join(valid_types)}')
         return v
 
+class ComplianceGap(ComplianceGapBase):
+    expected_answer_type: Optional[str] = None
+    search_terms_used: Optional[List[str]] = None
+    similarity_threshold_used: Optional[Decimal] = None
+    best_match_score: Optional[Decimal] = None
+    risk_level: str = "medium"
+    business_impact: str = "medium"
+    regulatory_requirement: bool = False
+    potential_fine_amount: Optional[Decimal] = None
+    
+    recommendation_type: Optional[str] = None
+    recommendation_text: Optional[str] = None
+    recommended_actions: Optional[List[str]] = None
+    related_documents: Optional[List[str]] = None
+    
+    detection_method: str = "query_analysis"
+    confidence_score: Optional[Decimal] = 0.80
+    false_positive_likelihood: Optional[Decimal] = 0.20
+    class Config:
+        use_enum_values = True
+
 class ComplianceGapUpdate(BaseModel):
     gap_title: Optional[str] = Field(None, max_length=255)
     gap_description: Optional[str] = None
@@ -564,19 +585,7 @@ class ComplianceGapFromChatHistoryRequest(BaseModel):
             raise ValueError(f'recommendation_type must be one of: {", ".join(valid_types)}')
         return v
 
-class ComplianceGap(BaseModel):
-    """Model for compliance gaps used in generation methods"""
-    id: Optional[str] = None
-    gap_title: Optional[str] = None
-    gap_description: Optional[str] = None
-    gap_type: Optional[GapType] = None
-    risk_level: Optional[RiskLevel] = None
-    regulatory_requirement: Optional[str] = None
-    compliance_domain: Optional[str] = None
-    assigned_to: Optional[str] = None
-    
-    class Config:
-        use_enum_values = True
+
 
 class ConversationAnalysis(BaseModel):
     """Analysis of chat conversation"""
@@ -1411,10 +1420,6 @@ class ExecutiveSummaryRequest(BaseModel):
     audit_report: AuditReportCreate
     compliance_gaps: List[ComplianceGap]
     summary_type: SummaryType = SummaryType.STANDARD
-    custom_instructions: Optional[str] = Field(
-        None, 
-        description="Optional custom instructions for summary generation"
-    )
 
 class ExecutiveSummaryResponse(BaseModel):
     """Response model for executive summary"""
