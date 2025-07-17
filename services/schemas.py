@@ -894,10 +894,8 @@ class AuditReportUpdate(BaseModel):
     def validate_target_audience(cls, v):
         if v is None:
             return v
-        # These are common values, but you may want to make this more flexible
         valid_audiences = ['executives', 'compliance_team', 'auditors', 'regulators', 'management', 'board']
         if v not in valid_audiences:
-            # Allow custom audiences but log a warning
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(f"Custom target_audience used: {v}")
@@ -905,75 +903,130 @@ class AuditReportUpdate(BaseModel):
     
     @validator('detailed_findings')
     def validate_detailed_findings(cls, v):
-        """Validate detailed findings - accept both dict and structured object"""
         if v is None:
-            return v
+            return []
         
-        if isinstance(v, DetailedFindings):
-            return v
+        if isinstance(v, list):
+            if len(v) == 0:
+                return []
+            validated_findings = []
+            for item in v:
+                if isinstance(item, DetailedFindings):
+                    validated_findings.append(item)
+                elif isinstance(item, dict):
+                    try:
+                        validated_finding = DetailedFindings(**item)
+                        validated_findings.append(validated_finding)
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"DetailedFinding validation failed, keeping as dict: {e}")
+                        validated_findings.append(item)
+                else:
+                    raise ValueError(f"Each detailed finding must be a dict or DetailedFindings object, got {type(item)}")
+            return validated_findings
+            
         elif isinstance(v, dict):
-            # Try to convert dict to structured object
-            try:
-                return DetailedFindings(**v)
-            except Exception:
-                # If conversion fails, return as dict for backward compatibility
-                return v
-        elif isinstance(v, list):
-            # Legacy format - convert to dict structure
-            return {
-                "findings": v,
-                "metadata": {"converted_from_legacy": True}
-            }
+            if 'findings' in v and isinstance(v['findings'], list):
+                return cls.validate_detailed_findings(v['findings'])
+            else:
+                try:
+                    validated_finding = DetailedFindings(**v)
+                    return [validated_finding]
+                except Exception:
+                    return [v]
+        
         else:
-            raise ValueError("detailed_findings must be a dict, list, or DetailedFindings object")
+            raise ValueError(f"detailed_findings must be a list or dict, got {type(v)}")
     
     @validator('recommendations')
     def validate_recommendations(cls, v):
-        """Validate recommendations - accept both dict list and structured objects"""
         if v is None:
-            return v
-        
+            return []
+
         if isinstance(v, list):
+            if len(v) == 0:
+                return []
             validated_recommendations = []
             for item in v:
                 if isinstance(item, GeneratedRecommendation):
                     validated_recommendations.append(item)
                 elif isinstance(item, dict):
-                    # Try to convert dict to structured object
                     try:
-                        validated_recommendations.append(GeneratedRecommendation(**item))
-                    except Exception:
-                        # If conversion fails, keep as dict for backward compatibility
+                        validated_rec = GeneratedRecommendation(**item)
+                        validated_recommendations.append(validated_rec)
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"GeneratedRecommendation validation failed, keeping as dict: {e}")
                         validated_recommendations.append(item)
                 else:
-                    raise ValueError("Each recommendation must be a dict or GeneratedRecommendation object")
+                    raise ValueError(f"Each recommendation must be a dict or GeneratedRecommendation object, got {type(item)}")
             return validated_recommendations
-        else:
-            raise ValueError("recommendations must be a list")
+
+        if isinstance(v, dict):
+            if 'recommendations' in v and isinstance(v['recommendations'], list):
+                return cls.validate_recommendations(v['recommendations'])
+            try:
+                validated_rec = GeneratedRecommendation(**v)
+                return [validated_rec]
+            except Exception:
+                return [v]
+        if isinstance(v, str):
+            try:
+                import json
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return cls.validate_recommendations(parsed)
+                return cls.validate_recommendations([parsed]) if isinstance(parsed, dict) else []
+            except json.JSONDecodeError:
+                return []
+        return []
     
     @validator('action_items')
     def validate_action_items(cls, v):
-        """Validate action items - accept both dict list and structured objects"""
         if v is None:
-            return v
+            return []
         
         if isinstance(v, list):
+            if len(v) == 0:
+                return []
+                
             validated_action_items = []
             for item in v:
                 if isinstance(item, GeneratedActionItem):
                     validated_action_items.append(item)
                 elif isinstance(item, dict):
-                    # Try to convert dict to structured object
                     try:
-                        validated_action_items.append(GeneratedActionItem(**item))
-                    except Exception:
-                        # If conversion fails, keep as dict for backward compatibility
+                        validated_item = GeneratedActionItem(**item)
+                        validated_action_items.append(validated_item)
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"GeneratedActionItem validation failed, keeping as dict: {e}")
                         validated_action_items.append(item)
                 else:
-                    raise ValueError("Each action item must be a dict or GeneratedActionItem object")
+                    raise ValueError(f"Each action item must be a dict or GeneratedActionItem object, got {type(item)}")
             return validated_action_items
-        else:
-            raise ValueError("action_items must be a list")
+        if isinstance(v, dict):
+            if 'action_items' in v and isinstance(v['action_items'], list):
+                return cls.validate_action_items(v['action_items'])
+            try:
+                validated_item = GeneratedActionItem(**v)
+                return [validated_item]
+            except Exception:
+                return [v]
+
+        if isinstance(v, str):
+            try:
+                import json
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return cls.validate_action_items(parsed)
+                return cls.validate_action_items([parsed]) if isinstance(parsed, dict) else []
+            except json.JSONDecodeError:
+                return []
+        return []
     
     @validator('distributed_to')
     def validate_distributed_to(cls, v):

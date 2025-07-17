@@ -862,6 +862,8 @@ def _process_data_for_supabase(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Process validated data for Supabase compatibility.
     """
+    from uuid import UUID
+    
     processed = {}
     
     for key, value in data.items():
@@ -874,9 +876,35 @@ def _process_data_for_supabase(data: Dict[str, Any]) -> Dict[str, Any]:
         # Handle Decimal objects
         elif isinstance(value, Decimal):
             processed[key] = float(value)
-        # Handle complex objects (dicts, lists) - Supabase handles JSON automatically
-        elif isinstance(value, (dict, list)):
-            processed[key] = value
+        # Handle UUID objects - convert to string
+        elif isinstance(value, UUID):
+            processed[key] = str(value)
+        # Handle lists that might contain UUIDs
+        elif isinstance(value, list):
+            processed_list = []
+            for item in value:
+                if isinstance(item, UUID):
+                    processed_list.append(str(item))
+                elif isinstance(item, datetime):
+                    processed_list.append(item.isoformat())
+                elif isinstance(item, Decimal):
+                    processed_list.append(float(item))
+                else:
+                    processed_list.append(item)
+            processed[key] = processed_list
+        # Handle dicts that might contain UUIDs
+        elif isinstance(value, dict):
+            processed_dict = {}
+            for dict_key, dict_value in value.items():
+                if isinstance(dict_value, UUID):
+                    processed_dict[dict_key] = str(dict_value)
+                elif isinstance(dict_value, datetime):
+                    processed_dict[dict_key] = dict_value.isoformat()
+                elif isinstance(dict_value, Decimal):
+                    processed_dict[dict_key] = float(dict_value)
+                else:
+                    processed_dict[dict_key] = dict_value
+            processed[key] = processed_dict
         else:
             processed[key] = value
     
