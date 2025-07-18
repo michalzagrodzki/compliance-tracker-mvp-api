@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from services.authentication import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
 from services.chat_history import get_audit_session_history, get_chat_history, get_chat_history_item, get_domain_history, get_user_history, insert_chat_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
+from services.compliance_gap_recommendation import generate_compliance_recommendation
 from services.compliance_gaps import assign_gap_to_user, create_compliance_gap, get_chat_history_by_id, get_compliance_gap_by_id, get_compliance_gaps_statistics, get_document_by_id, get_gaps_by_audit_session, get_gaps_by_domain, get_gaps_by_user, list_compliance_gaps, log_document_access, mark_gap_reviewed, update_compliance_gap, update_gap_status
 from services.db_check import check_database_connection
 from services.document import (
@@ -17,7 +18,7 @@ from services.document import (
     get_documents_by_version,
     get_documents_by_domain_and_version
 )
-from services.executive_summary import generate_executive_summary, generate_executive_summary_debug
+from services.executive_summary import generate_executive_summary
 from services.schemas import (
     AuditSessionCreateResponse,
     AuditSessionPdfIngestionBulkCreate,
@@ -30,6 +31,8 @@ from services.schemas import (
     ComplianceGapFromChatHistoryRequest,
     ComplianceGapStatusUpdate,
     ComplianceGapUpdate,
+    ComplianceRecommendationRequest,
+    ComplianceRecommendationResponse,
     DocumentTagConstants,
     DocumentTagsRequest,
     ExecutiveSummaryRequest,
@@ -1729,6 +1732,70 @@ def review_compliance_gap(
     current_user: UserResponse = Depends(require_compliance_officer_or_admin)
 ) -> Dict[str, Any]:
     return mark_gap_reviewed(gap_id, reviewer_notes)
+
+@router_v1.post("/compliance-gaps/recommendation",
+    response_model=ComplianceRecommendationResponse,
+    summary="Generate AI-powered recommendation for compliance gap",
+    description="Creates a detailed, actionable recommendation using OpenAI API based on chat history context and specified recommendation type. Returns formatted recommendation text with implementation steps.",
+    tags=["Compliance Gaps"],
+)
+def create_compliance_recommendation(
+    req: ComplianceRecommendationRequest,
+    request: Request,
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> ComplianceRecommendationResponse:
+    
+    start_time = time.time()
+    
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
+    # Validate recommendation_type
+    valid_types = ['create_policy', 'update_policy', 'upload_document', 
+                   'training_needed', 'process_improvement', 'system_configuration']
+    if req.recommendation_type not in valid_types:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid recommendation_type. Must be one of: {', '.join(valid_types)}"
+        )
+    
+    try:
+        recommendation_text = generate_compliance_recommendation(
+            chat_history_item=req.chat_history_item.model_dump(),
+            recommendation_type=req.recommendation_type,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail="An unexpected error occurred while generating the recommendation"
+        )
+    
+    end_time = time.time()
+    response_time_ms = int((end_time - start_time) * 1000)
+    
+    generation_metadata = {
+        "generation_time_ms": response_time_ms,
+        "recommendation_type": req.recommendation_type,
+        "ip_address": ip_address,
+        "user_agent": user_agent,
+        "openai_model": settings.openai_model,
+        "chat_history_id": req.chat_history_item.id,
+        "audit_session_id": req.chat_history_item.audit_session_id,
+        "compliance_domain": req.chat_history_item.compliance_domain,
+        "original_question": req.chat_history_item.question,
+        "source_document_count": len(req.chat_history_item.source_document_ids) if req.chat_history_item.source_document_ids else 0
+    }
+    
+    return ComplianceRecommendationResponse(
+        recommendation_text=recommendation_text,
+        recommendation_type=req.recommendation_type,
+        chat_history_id=req.chat_history_item.id,
+        audit_session_id=req.chat_history_item.audit_session_id,
+        compliance_domain=req.chat_history_item.compliance_domain,
+        generation_metadata=generation_metadata
+    )
 
 @router_v1.get("/compliance-domains/{domain_code}/gaps",
     summary="Get compliance gaps by domain",

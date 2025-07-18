@@ -585,7 +585,17 @@ class ComplianceGapFromChatHistoryRequest(BaseModel):
             raise ValueError(f'recommendation_type must be one of: {", ".join(valid_types)}')
         return v
 
+class ComplianceRecommendationRequest(BaseModel):
+    chat_history_item: ChatHistoryItem
+    recommendation_type: str = Field(..., description="Type of recommendation to generate")
 
+class ComplianceRecommendationResponse(BaseModel):
+    recommendation_text: str
+    recommendation_type: str
+    chat_history_id: int
+    audit_session_id: str
+    compliance_domain: str
+    generation_metadata: Dict[str, Any]
 
 class ConversationAnalysis(BaseModel):
     """Analysis of chat conversation"""
