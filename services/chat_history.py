@@ -83,6 +83,70 @@ def get_chat_history(
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
+def get_chat_history_item(item_id: int) -> Dict[str, any]:
+    try:
+        logger.info(f"Fetching chat history item with ID: {item_id}")
+        
+        resp = (
+            supabase
+            .table(settings.supabase_table_chat_history)
+            .select("""
+                id,
+                conversation_id,
+                question,
+                answer,
+                created_at,
+                audit_session_id,
+                compliance_domain,
+                source_document_ids,
+                match_threshold,
+                match_count,
+                user_id,
+                response_time_ms,
+                total_tokens_used,
+                metadata
+            """)
+            .eq("id", item_id)
+            .execute()
+        )
+        
+        if not resp.data:
+            logger.warning(f"No chat history item found with ID: {item_id}")
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Chat history item with ID {item_id} not found"
+            )
+        
+        row = resp.data[0]  # Get the first (and only) result
+        
+        # Process the row data with proper type conversions
+        processed_item = {
+            "id": str(row["id"]),
+            "conversation_id": str(row["conversation_id"]),
+            "question": row["question"],
+            "answer": row["answer"],
+            "created_at": row["created_at"],
+            "audit_session_id": str(row["audit_session_id"]) if row["audit_session_id"] else None,
+            "compliance_domain": row["compliance_domain"],
+            "source_document_ids": [str(doc_id) for doc_id in (row["source_document_ids"] or [])],
+            "match_threshold": float(row["match_threshold"]) if row["match_threshold"] else None,
+            "match_count": row["match_count"],
+            "user_id": str(row["user_id"]) if row["user_id"] else None,
+            "response_time_ms": row["response_time_ms"],
+            "total_tokens_used": row["total_tokens_used"],
+            "metadata": row.get("metadata", {})
+        }
+        
+        logger.info(f"Successfully retrieved chat history item with ID: {item_id}")
+        return processed_item
+        
+    except HTTPException:
+        # Re-raise HTTPExceptions (like 404) without wrapping
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching chat history item with ID {item_id}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    
 def insert_chat_history(
     conversation_id: str,
     question: str,
@@ -132,7 +196,6 @@ def insert_chat_history(
         logger.error("Error inserting chat history", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
-
 def get_audit_session_history(
     audit_session_id: str,
     compliance_domain: Optional[str] = None
@@ -256,7 +319,6 @@ def get_audit_session_history(
     except Exception as e:
         logger.error("Error fetching audit session history", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
 
 def get_domain_history(
     domain_code: str,
@@ -317,7 +379,6 @@ def get_domain_history(
     except Exception as e:
         logger.error(f"Error fetching domain history for {domain_code}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
 
 def get_user_history(
     user_id: str,

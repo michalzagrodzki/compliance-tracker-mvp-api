@@ -87,7 +87,7 @@ class ChatHistoryItem(BaseModel):
     # Audit and compliance tracking
     audit_session_id: Optional[str] = None
     compliance_domain: Optional[str] = None
-    source_document_ids: List[str] = Field(default_factory=list)
+    source_document_ids: Optional[List[str]] = Field(default_factory=list)
     match_threshold: Optional[float] = None
     match_count: Optional[int] = None
     user_id: Optional[str] = None

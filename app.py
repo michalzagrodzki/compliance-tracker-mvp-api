@@ -5,7 +5,7 @@ import uuid
 from fastapi import Depends, FastAPI, HTTPException, APIRouter, File, Request, UploadFile, Form, Path, Body, Query
 from fastapi.security import HTTPAuthorizationCredentials
 from services.authentication import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
-from services.chat_history import get_audit_session_history, get_chat_history, get_domain_history, get_user_history, insert_chat_history
+from services.chat_history import get_audit_session_history, get_chat_history, get_chat_history_item, get_domain_history, get_user_history, insert_chat_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.compliance_gaps import assign_gap_to_user, create_compliance_gap, get_chat_history_by_id, get_compliance_gap_by_id, get_compliance_gaps_statistics, get_document_by_id, get_gaps_by_audit_session, get_gaps_by_domain, get_gaps_by_user, list_compliance_gaps, log_document_access, mark_gap_reviewed, update_compliance_gap, update_gap_status
 from services.db_check import check_database_connection
@@ -667,6 +667,18 @@ def create_executive_summary(
         potential_financial_impact=potential_financial_impact,
         generation_metadata=generation_metadata
     )
+
+@router_v1.get("/history/item/{item_id}",
+    response_model=ChatHistoryItem,
+    summary="Get single chat history item by ID",
+    description="Returns a single chat history entry by its unique ID",
+    tags=["History"],
+)
+def read_history_item(
+    item_id: int, 
+    current_user: UserResponse = Depends(get_current_active_user)
+):
+    return get_chat_history_item(item_id)
 
 @router_v1.get("/history/{conversation_id}",
     response_model=List[ChatHistoryItem],
