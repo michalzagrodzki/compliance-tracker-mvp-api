@@ -10,6 +10,7 @@ from services.chat_history import get_audit_session_history, get_chat_history, g
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.compliance_gap_recommendation import generate_compliance_recommendation
 from services.compliance_gaps import assign_gap_to_user, create_compliance_gap, get_chat_history_by_id, get_compliance_gap_by_id, get_compliance_gaps_statistics, get_document_by_id, get_gaps_by_audit_session, get_gaps_by_domain, get_gaps_by_user, list_compliance_gaps, log_document_access, mark_gap_reviewed, update_compliance_gap, update_gap_status
+from services.control_risk_prioritization import ControlRiskPrioritizationResponse, calculate_risk_prioritization_metrics, generate_control_risk_prioritization
 from services.db_check import check_database_connection
 from services.document import (
     get_documents_by_tags,
@@ -44,7 +45,9 @@ from services.schemas import (
     QueryRequest, 
     QueryResponse, 
     ChatHistoryItem,
-    RiskLevel, 
+    RiskLevel,
+    ThreatIntelligenceRequest,
+    ThreatIntelligenceResponse, 
     UploadResponse,
     AuditSessionCreate, 
     AuditSessionUpdate, 
@@ -144,6 +147,7 @@ from services.audit_report_distributions import (
 )
 from datetime import datetime, time, timezone
 from services.audit_sessions import ( delete_audit_session, get_audit_session_statistics )
+from services.threat_intelligence import generate_threat_intelligence
 from services.user_management import UserUpdate, activate_user, deactivate_user, get_user_by_id, get_users_by_compliance_domain, get_users_by_role, list_users, update_user
 import time
 
@@ -2192,6 +2196,194 @@ def create_executive_summary(
         potential_financial_impact=potential_financial_impact,
         generation_metadata=generation_metadata
     )
+
+@router_v1.post("/audit-reports/threat-intelligence",
+    response_model=ThreatIntelligenceResponse,
+    summary="Generate threat intelligence analysis from audit report and compliance gaps",
+    description="Creates a professional threat intelligence analysis using OpenAI API based on audit report data and identified compliance gaps. Returns formatted markdown suitable for security teams and executives.",
+    tags=["Audit Reports"],
+)
+def create_threat_intelligence_analysis(
+    req: ThreatIntelligenceRequest,
+    request: Request,
+    current_user: UserResponse = Depends(get_current_active_user)  # Remove if you don't have auth
+) -> ThreatIntelligenceResponse:
+    
+    start_time = time.time()
+    
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    if req.audit_report.audit_session_id != req.compliance_gaps[0].audit_session_id if req.compliance_gaps else True:
+        if req.compliance_gaps:
+            mismatched_gaps = [
+                gap for gap in req.compliance_gaps 
+                if gap.audit_session_id != req.audit_report.audit_session_id
+            ]
+            if mismatched_gaps:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Found {len(mismatched_gaps)} compliance gaps with mismatched audit_session_id"
+                )
+
+    audit_report_dict = req.audit_report.model_dump()
+    compliance_gaps_list = [gap.model_dump() for gap in req.compliance_gaps]
+
+    try:
+        threat_analysis = generate_threat_intelligence(
+            audit_report=audit_report_dict,
+            compliance_gaps=compliance_gaps_list,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail="An unexpected error occurred while generating the threat intelligence analysis"
+        )
+    
+    end_time = time.time()
+    response_time_ms = int((end_time - start_time) * 1000)
+
+    total_gaps = len(req.compliance_gaps)
+    high_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == 'high'])
+    medium_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == 'medium'])
+    low_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == 'low'])
+    regulatory_gaps = len([gap for gap in req.compliance_gaps if gap.regulatory_requirement])
+
+    generation_metadata = {
+        "generation_time_ms": response_time_ms,
+        "analysis_type": "threat_intelligence",
+        "ip_address": ip_address,
+        "user_agent": user_agent,
+        "openai_model": settings.openai_model,
+        "audit_report_title": req.audit_report.report_title,
+        "compliance_domain": req.audit_report.compliance_domain,
+        "target_audience": req.audit_report.target_audience,
+        "confidentiality_level": req.audit_report.confidentiality_level,
+        "documents_reviewed": len(req.audit_report.document_ids),
+        "chat_sessions": len(req.audit_report.chat_history_ids),
+        "pdf_sources": len(req.audit_report.pdf_ingestion_ids),
+        "industry_sector": "IT",  # Hardcoded as requested
+        "average_confidence_score": (
+            sum(gap.confidence_score for gap in req.compliance_gaps) / len(req.compliance_gaps)
+            if req.compliance_gaps else 0.0
+        ),
+        "average_false_positive_likelihood": (
+            sum(gap.false_positive_likelihood for gap in req.compliance_gaps) / len(req.compliance_gaps)
+            if req.compliance_gaps else 0.0
+        )
+    }
+    
+    return ThreatIntelligenceResponse(
+        threat_analysis=threat_analysis,
+        audit_session_id=req.audit_report.audit_session_id,
+        compliance_domain=req.audit_report.compliance_domain,
+        total_gaps=total_gaps,
+        high_risk_gaps=high_risk_gaps,
+        medium_risk_gaps=medium_risk_gaps,
+        low_risk_gaps=low_risk_gaps,
+        regulatory_gaps=regulatory_gaps,
+        generation_metadata=generation_metadata
+    )
+
+@router_v1.post("/audit-reports/risk-prioritization",
+    response_model=ControlRiskPrioritizationResponse,
+    summary="Generate control risk prioritization from audit report and compliance gaps",
+    description="Creates a professional control risk prioritization analysis using OpenAI API based on audit report data and identified compliance gaps. Returns formatted markdown suitable for C-level executives and board members with strategic business intelligence.",
+    tags=["Audit Reports"],
+)
+def create_control_risk_prioritization(
+    req: ThreatIntelligenceRequest,
+    request: Request,
+    current_user: UserResponse = Depends(get_current_active_user)  # Uncomment if you have auth
+) -> ControlRiskPrioritizationResponse:
+    start_time = time.time()
+    
+    # Extract request metadata
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    if req.compliance_gaps:
+        mismatched_gaps = [
+            gap for gap in req.compliance_gaps 
+            if gap.audit_session_id != req.audit_report.audit_session_id
+        ]
+        if mismatched_gaps:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Found {len(mismatched_gaps)} compliance gaps with mismatched audit_session_id"
+            )
+
+    audit_report_dict = req.audit_report.model_dump()
+    compliance_gaps_list = [gap.model_dump() for gap in req.compliance_gaps]
+
+    try:
+        risk_analysis = generate_control_risk_prioritization(
+            audit_report=audit_report_dict,
+            compliance_gaps=compliance_gaps_list,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail="An unexpected error occurred while generating the control risk prioritization analysis"
+        )
+    
+    end_time = time.time()
+    response_time_ms = int((end_time - start_time) * 1000)
+
+    metrics = calculate_risk_prioritization_metrics(audit_report_dict, req.compliance_gaps)
+
+    generation_metadata = {
+        "generation_time_ms": response_time_ms,
+        "analysis_type": "control_risk_prioritization",
+        "ip_address": ip_address,
+        "user_agent": user_agent,
+        "openai_model": settings.openai_model,
+        "audit_report_title": req.audit_report.report_title,
+        "compliance_domain": req.audit_report.compliance_domain,
+        "target_audience": req.audit_report.target_audience,
+        "confidentiality_level": req.audit_report.confidentiality_level,
+        "documents_reviewed": len(req.audit_report.document_ids or []),
+        "chat_sessions": len(req.audit_report.chat_history_ids or []),
+        "pdf_sources": len(req.audit_report.pdf_ingestion_ids or []),
+        "company_size": "Medium Enterprise",
+        "industry_sector": "IT Services",
+        "geographic_footprint": "Multi-regional operations",
+        "average_confidence_score": (
+            sum(gap.confidence_score for gap in req.compliance_gaps) / len(req.compliance_gaps)
+            if req.compliance_gaps else 0.0
+        ),
+        "average_false_positive_likelihood": (
+            sum(gap.false_positive_likelihood for gap in req.compliance_gaps) / len(req.compliance_gaps)
+            if req.compliance_gaps else 0.0
+        ),
+        "iso27001_control_families_total": 14,
+        "risk_prioritization_methodology": "High Risk + High Impact = Priority 1, Strategic combinations = Priority 2, Others = Priority 3"
+    }
+    
+    return ControlRiskPrioritizationResponse(
+        risk_prioritization_analysis=risk_analysis,
+        audit_session_id=req.audit_report.audit_session_id,
+        compliance_domain=req.audit_report.compliance_domain,
+        total_gaps=metrics["total_gaps"],
+        high_risk_gaps=metrics["high_risk_gaps"],
+        medium_risk_gaps=metrics["medium_risk_gaps"],
+        low_risk_gaps=metrics["low_risk_gaps"],
+        regulatory_gaps=metrics["regulatory_gaps"],
+        affected_control_families=metrics["affected_control_families"],
+        certification_readiness_score=metrics["certification_readiness_score"],
+        estimated_investment_range=metrics["estimated_investment_range"],
+        priority_1_gaps=metrics["priority_1_gaps"],
+        priority_2_gaps=metrics["priority_2_gaps"],
+        priority_3_gaps=metrics["priority_3_gaps"],
+        estimated_timeline_months=metrics["estimated_timeline_months"],
+        total_potential_fines=metrics["total_potential_fines"],
+        generation_metadata=generation_metadata
+    )
+    
 @router_v1.get("/audit-reports/distributions",
     summary="List all audit report distributions",
     description="Get paginated audit report distributions with optional filtering",

@@ -1689,7 +1689,24 @@ class ComplianceCoverageAnalysis(BaseModel):
     coverage_score: float = Field(ge=0, le=1, description="Overall coverage score (0-1)")
     recommendations: List[str] = Field(description="Recommendations for improving coverage")
 
+class ThreatIntelligenceRequest(BaseModel):
+    """Request model for threat intelligence analysis generation"""
+    audit_report: AuditReportCreate
+    compliance_gaps: List[ComplianceGap]
 
+class ThreatIntelligenceResponse(BaseModel):
+    """Response model for threat intelligence analysis"""
+    threat_analysis: str = Field(description="Generated threat intelligence analysis in markdown format")
+    audit_session_id: UUID
+    compliance_domain: str
+    total_gaps: int
+    high_risk_gaps: int
+    medium_risk_gaps: int
+    low_risk_gaps: int
+    regulatory_gaps: int
+    generation_metadata: Dict[str, Any] = Field(
+        description="Metadata about the threat intelligence generation process"
+    )
 
 class DocumentTagConstants:    
     DOCUMENT_TYPES = {
