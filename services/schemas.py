@@ -1708,6 +1708,23 @@ class ThreatIntelligenceResponse(BaseModel):
         description="Metadata about the threat intelligence generation process"
     )
 
+class TargetAudienceSummaryResponse(BaseModel):
+    target_audience_summary: str = Field(description="Generated target audience summary in markdown format")
+    audit_session_id: UUID
+    compliance_domain: str
+    target_audience: str = Field(description="Target audience for the summary")
+    total_gaps: int
+    high_risk_gaps: int
+    medium_risk_gaps: int
+    low_risk_gaps: int
+    regulatory_gaps: int
+    gaps_with_recommendations: int = Field(description="Number of gaps that have recommendations")
+    potential_financial_impact: float
+    audience_focus_areas: List[str] = Field(description="Key focus areas for this audience")
+    generation_metadata: Dict[str, Any] = Field(
+        description="Metadata about the target audience summary generation process"
+    )
+
 class DocumentTagConstants:    
     DOCUMENT_TYPES = {
         "reference_document": "ISO norms, GDPR regulations, standards",

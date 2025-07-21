@@ -46,6 +46,7 @@ from services.schemas import (
     QueryResponse, 
     ChatHistoryItem,
     RiskLevel,
+    TargetAudienceSummaryResponse,
     ThreatIntelligenceRequest,
     ThreatIntelligenceResponse, 
     UploadResponse,
@@ -147,6 +148,7 @@ from services.audit_report_distributions import (
 )
 from datetime import datetime, time, timezone
 from services.audit_sessions import ( delete_audit_session, get_audit_session_statistics )
+from services.target_audience_summary import generate_target_audience_summary
 from services.threat_intelligence import generate_threat_intelligence
 from services.user_management import UserUpdate, activate_user, deactivate_user, get_user_by_id, get_users_by_compliance_domain, get_users_by_role, list_users, update_user
 import time
@@ -2383,7 +2385,118 @@ def create_control_risk_prioritization(
         total_potential_fines=metrics["total_potential_fines"],
         generation_metadata=generation_metadata
     )
+
+@router_v1.post("/audit-reports/target-audience",
+    response_model=TargetAudienceSummaryResponse,
+    summary="Generate target audience summary from audit report and compliance gaps",
+    description="Creates a professional target audience-specific summary using OpenAI API based on audit report data and identified compliance gaps. Returns formatted markdown tailored to the specific audience needs (executives, compliance_team, auditors, regulators, board).",
+    tags=["Audit Reports"],
+)
+def create_target_audience_summary(
+    req: ExecutiveSummaryRequest,
+    request: Request,
+    current_user: UserResponse = Depends(get_current_active_user)
+) -> TargetAudienceSummaryResponse:
+
+    start_time = time.time()
+
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
     
+    if req.compliance_gaps and req.audit_report.audit_session_id != req.compliance_gaps[0].audit_session_id:
+        mismatched_gaps = [
+            gap for gap in req.compliance_gaps 
+            if gap.audit_session_id != req.audit_report.audit_session_id
+        ]
+        if mismatched_gaps:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Found {len(mismatched_gaps)} compliance gaps with mismatched audit_session_id"
+            )
+
+    audit_report_dict = req.audit_report.model_dump()
+    compliance_gaps_list = req.compliance_gaps
+
+    try:
+        target_audience_summary = generate_target_audience_summary(
+            audit_report=audit_report_dict,
+            compliance_gaps=compliance_gaps_list,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail="An unexpected error occurred while generating the target audience summary"
+        )
+    
+    end_time = time.time()
+    response_time_ms = int((end_time - start_time) * 1000)
+
+    # Calculate summary statistics
+    total_gaps = len(req.compliance_gaps)
+    high_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == 'high'])
+    medium_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == 'medium'])
+    low_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == 'low'])
+    regulatory_gaps = len([gap for gap in req.compliance_gaps if gap.regulatory_requirement])
+    
+    gaps_with_recommendations = len([
+        gap for gap in req.compliance_gaps 
+        if gap.recommendation_text and gap.recommendation_text.strip()
+    ])
+    
+    potential_financial_impact = sum(
+        float(gap.potential_fine_amount) if gap.potential_fine_amount is not None else 0.0
+        for gap in req.compliance_gaps
+    )
+
+    # Get audience-specific focus areas
+    from services.target_audience_summary import get_audience_context
+    audience_context = get_audience_context(req.audit_report.target_audience)
+    audience_focus_areas = audience_context.get('focus', '').split(', ')
+
+    generation_metadata = {
+        "generation_time_ms": response_time_ms,
+        "target_audience": req.audit_report.target_audience,
+        "ip_address": ip_address,
+        "user_agent": user_agent,
+        "openai_model": settings.openai_model,
+        "audit_report_title": req.audit_report.report_title,
+        "confidentiality_level": req.audit_report.confidentiality_level,
+        "documents_reviewed": len(req.audit_report.document_ids or []),
+        "chat_sessions": len(req.audit_report.chat_history_ids or []),
+        "pdf_sources": len(req.audit_report.pdf_ingestion_ids or []),
+        "audience_tone": audience_context.get('tone', 'professional'),
+        "audience_format": audience_context.get('format', 'standard'),
+        "audience_language": audience_context.get('language', 'professional'),
+        "average_confidence_score": (
+            sum(gap.confidence_score for gap in req.compliance_gaps if gap.confidence_score) / 
+            len([gap for gap in req.compliance_gaps if gap.confidence_score])
+            if any(gap.confidence_score for gap in req.compliance_gaps) else 0.0
+        ),
+        "average_false_positive_likelihood": (
+            sum(gap.false_positive_likelihood for gap in req.compliance_gaps if gap.false_positive_likelihood) / 
+            len([gap for gap in req.compliance_gaps if gap.false_positive_likelihood])
+            if any(gap.false_positive_likelihood for gap in req.compliance_gaps) else 0.0
+        )
+    }
+    
+    return TargetAudienceSummaryResponse(
+        target_audience_summary=target_audience_summary,
+        audit_session_id=req.audit_report.audit_session_id,
+        compliance_domain=req.audit_report.compliance_domain,
+        target_audience=req.audit_report.target_audience,
+        total_gaps=total_gaps,
+        high_risk_gaps=high_risk_gaps,
+        medium_risk_gaps=medium_risk_gaps,
+        low_risk_gaps=low_risk_gaps,
+        regulatory_gaps=regulatory_gaps,
+        gaps_with_recommendations=gaps_with_recommendations,
+        potential_financial_impact=potential_financial_impact,
+        audience_focus_areas=audience_focus_areas,
+        generation_metadata=generation_metadata
+    )
+
 @router_v1.get("/audit-reports/distributions",
     summary="List all audit report distributions",
     description="Get paginated audit report distributions with optional filtering",
