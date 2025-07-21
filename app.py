@@ -4,6 +4,7 @@ from pathlib import Path
 import uuid
 from fastapi import Depends, FastAPI, HTTPException, APIRouter, File, Request, UploadFile, Form, Path, Body, Query
 from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import ValidationError
 from services.authentication import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
 from services.chat_history import get_audit_session_history, get_chat_history, get_chat_history_item, get_domain_history, get_user_history, insert_chat_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
@@ -1688,10 +1689,25 @@ def update_existing_compliance_gap(
     update_data: ComplianceGapUpdate = Body(..., description="Fields to update"),
     current_user: UserResponse = Depends(require_compliance_officer_or_admin)
 ) -> Dict[str, Any]:
-    update_dict = update_data.model_dump(exclude_unset=True)
-    update_dict["updated_at"] = datetime.now(timezone.utc)
+    try:
+        update_dict = update_data.model_dump(exclude_unset=True, exclude_none=True)
+        
+        if not update_dict:
+            raise HTTPException(
+                status_code=400, 
+                detail="No valid update data provided"
+            )
+        
+        update_dict["updated_at"] = datetime.now(timezone.utc)
+        
+        return update_compliance_gap(gap_id, update_dict)
     
-    return update_compliance_gap(gap_id, update_dict)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=f"Validation error: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router_v1.put("/compliance-gaps/{gap_id}/status",
     summary="Update compliance gap status",

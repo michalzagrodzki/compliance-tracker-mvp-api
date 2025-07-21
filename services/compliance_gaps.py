@@ -1,7 +1,8 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
+import uuid
 from fastapi import HTTPException
 from db.supabase_client import create_supabase_client
 from config.config import settings
@@ -262,46 +263,161 @@ def create_compliance_gap(gap_data: Dict[str, Any]) -> Dict[str, Any]:
 def update_compliance_gap(gap_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
     try:
         logger.info(f"Updating compliance gap {gap_id}")
+        try:
+            uuid.UUID(gap_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid gap_id format (must be UUID)")
+        processed_data = update_data.copy()
 
-        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        if "updated_at" not in processed_data:
+            processed_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        elif isinstance(processed_data["updated_at"], datetime):
+            processed_data["updated_at"] = processed_data["updated_at"].isoformat()
 
-        if "status" in update_data:
-            if update_data["status"] == "acknowledged" and "acknowledged_at" not in update_data:
-                update_data["acknowledged_at"] = datetime.now(timezone.utc).isoformat()
-            elif update_data["status"] == "resolved" and "resolved_at" not in update_data:
-                update_data["resolved_at"] = datetime.now(timezone.utc).isoformat()
+        if "status" in processed_data:
+            status = processed_data["status"]
+            if status == "acknowledged" and "acknowledged_at" not in processed_data:
+                processed_data["acknowledged_at"] = datetime.now(timezone.utc).isoformat()
+            elif status == "resolved" and "resolved_at" not in processed_data:
+                processed_data["resolved_at"] = datetime.now(timezone.utc).isoformat()
 
-        filtered_update_data = {k: v for k, v in update_data.items() if v is not None}
-        
-        if not filtered_update_data:
-            raise HTTPException(status_code=400, detail="No valid update data provided")
-        
+        datetime_fields = ["due_date", "acknowledged_at", "resolved_at", "last_reviewed_at"]
+        for field in datetime_fields:
+            if field in processed_data and isinstance(processed_data[field], datetime):
+                processed_data[field] = processed_data[field].isoformat()
+
+        uuid_fields = ["assigned_to", "pdf_ingestion_id"]
+        for field in uuid_fields:
+            if field in processed_data and processed_data[field] is not None:
+                if not isinstance(processed_data[field], str):
+                    processed_data[field] = str(processed_data[field])
+
+        decimal_fields = [
+            "potential_fine_amount", "confidence_score", 
+            "false_positive_likelihood", "similarity_threshold_used", "best_match_score"
+        ]
+        for field in decimal_fields:
+            if field in processed_data and processed_data[field] is not None:
+                try:
+                    if isinstance(processed_data[field], Decimal):
+                        processed_data[field] = float(processed_data[field])
+                    elif isinstance(processed_data[field], (int, str)):
+                        processed_data[field] = float(processed_data[field])
+                except (ValueError, TypeError, InvalidOperation):
+                    logger.warning(f"Invalid {field} value: {processed_data[field]}")
+                    processed_data.pop(field, None)
+
+        array_fields = ["search_terms_used", "related_documents", "recommended_actions"]
+        for field in array_fields:
+            if field in processed_data:
+                if processed_data[field] is not None:
+                    if not isinstance(processed_data[field], list):
+                        processed_data[field] = [processed_data[field]] if processed_data[field] else []
+                    if field in ["search_terms_used", "related_documents"]:
+                        processed_data[field] = [str(item) for item in processed_data[field]]
+
+        json_fields = ["session_context"]
+        for field in json_fields:
+            if field in processed_data:
+                if processed_data[field] is not None and not isinstance(processed_data[field], dict):
+                    logger.warning(f"Invalid {field} format, expected dict")
+                    processed_data.pop(field, None)
+
+        if "gap_type" in processed_data:
+            valid_gap_types = [
+                'missing_policy', 'outdated_policy', 'low_confidence', 
+                'conflicting_policies', 'incomplete_coverage', 'no_evidence'
+            ]
+            if processed_data["gap_type"] not in valid_gap_types:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid gap_type. Must be one of: {', '.join(valid_gap_types)}"
+                )
+
+        if "risk_level" in processed_data:
+            valid_risk_levels = ['low', 'medium', 'high', 'critical']
+            if processed_data["risk_level"] not in valid_risk_levels:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid risk_level. Must be one of: {', '.join(valid_risk_levels)}"
+                )
+
+        if "business_impact" in processed_data:
+            valid_business_impacts = ['low', 'medium', 'high', 'critical']
+            if processed_data["business_impact"] not in valid_business_impacts:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid business_impact. Must be one of: {', '.join(valid_business_impacts)}"
+                )
+
+        if "status" in processed_data:
+            valid_statuses = [
+                'identified', 'acknowledged', 'in_progress', 'resolved', 
+                'false_positive', 'accepted_risk'
+            ]
+            if processed_data["status"] not in valid_statuses:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+                )
+
+        if "confidence_score" in processed_data and processed_data["confidence_score"] is not None:
+            score = processed_data["confidence_score"]
+            if not (0 <= score <= 1):
+                raise HTTPException(
+                    status_code=400,
+                    detail="confidence_score must be between 0 and 1"
+                )
+
+        if "false_positive_likelihood" in processed_data and processed_data["false_positive_likelihood"] is not None:
+            likelihood = processed_data["false_positive_likelihood"]
+            if not (0 <= likelihood <= 1):
+                raise HTTPException(
+                    status_code=400,
+                    detail="false_positive_likelihood must be between 0 and 1"
+                )
+
+        filtered_data = {}
+        for key, value in processed_data.items():
+            if value is not None and value != "":
+                filtered_data[key] = value
+
+        if not filtered_data:
+            raise HTTPException(
+                status_code=400, 
+                detail="No valid update data provided after processing"
+            )
+
         resp = (
             supabase
             .table(settings.supabase_table_compliance_gaps)
-            .update(filtered_update_data)
+            .update(filtered_data)
             .eq("id", gap_id)
             .execute()
         )
-        
+
         if hasattr(resp, "error") and resp.error:
             logger.error("Supabase compliance gap update failed", exc_info=True)
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to update compliance gap: {resp.error.message}"
             )
-        
+
         if not resp.data:
-            raise HTTPException(status_code=404, detail=f"Compliance gap {gap_id} not found")
-        
-        logger.info(f"Updated compliance gap {gap_id}")
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Compliance gap {gap_id} not found"
+            )
+
+        logger.info(f"Successfully updated compliance gap {gap_id}")
         return resp.data[0]
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to update compliance gap {gap_id}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
 
 def update_gap_status(gap_id: str, new_status: str, resolution_notes: Optional[str] = None) -> Dict[str, Any]:
     try:
