@@ -5,7 +5,8 @@ import uuid
 from fastapi import Depends, FastAPI, HTTPException, APIRouter, File, Request, UploadFile, Form, Path, Body, Query
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
-from services.authentication import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
+from security.input_validator import SecurityError, validate_and_secure_query_request
+from services.authentication import AuthenticatedUser, RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
 from services.chat_history import get_audit_session_history, get_chat_history, get_chat_history_item, get_domain_history, get_user_history, insert_chat_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.compliance_gap_recommendation import generate_compliance_recommendation
@@ -121,13 +122,11 @@ from services.audit_reports import (
 )
 from services.audit_report_versions import (
     list_audit_report_versions,
-    get_audit_report_version_by_id,
     get_latest_audit_report_version,
     get_audit_report_version_by_number,
     create_audit_report_version,
     compare_audit_report_versions,
     restore_audit_report_version,
-    delete_audit_report_version,
     get_version_history_summary,
     serialize_uuids
 )
@@ -154,7 +153,7 @@ from services.user_management import UserUpdate, activate_user, deactivate_user,
 import time
 
 logging.basicConfig(
-    level=logging.DEBUG,  # or DEBUG
+    level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
@@ -166,6 +165,10 @@ app = FastAPI(
 )
 
 configure_cors(app)
+
+@app.exception_handler(SecurityError)
+async def security_error_handler(request: Request, exc: SecurityError):
+    return {"detail": str(exc), "type": "security_error"}
 
 router_v1 = APIRouter(prefix="/v1")
 
@@ -382,7 +385,34 @@ def get_tag_constants_endpoint(
     description="Retrieval-Augmented Generation over ingested documents with full audit trail logging.",
     tags=["RAG"],
 )
-def query_qa(req: QueryRequest, request: Request) -> QueryResponse:
+def query_qa(req: QueryRequest, request: Request, current_user: AuthenticatedUser = Depends(get_current_user)) -> QueryResponse:
+    user_data = get_user_by_id(current_user.user_id)
+        
+    if not user_data.get("is_active", False):
+        logging.warning(f"Inactive user blocked: {user_data.get('email')} ({current_user.user_id})")
+        raise HTTPException(
+            status_code=403,
+            detail="Your account has been deactivated. Please contact support."
+        )
+    
+    user_role = user_data.get("role", "user")
+    if user_role in ["restricted", "banned"]:
+        logging.warning(f"Restricted user blocked: {user_data.get('email')} (role: {user_role})")
+        raise HTTPException(
+            status_code=403,
+            detail="Your account has restricted access. Contact administrator."
+        )
+    
+    if req.compliance_domain:
+        user_compliance_domains = user_data.get("compliance_domains", [])
+        if req.compliance_domain not in user_compliance_domains:
+            logging.warning(f"User {user_data.get('email')} denied access to domain {req.compliance_domain}")
+            raise HTTPException(
+                status_code=403,
+                detail=f"You don't have access to compliance domain: {req.compliance_domain}"
+            )
+    
+    validated_req = validate_and_secure_query_request(req, request)
     start_time = time.time()
     
     # Extract client information for audit trail
@@ -408,11 +438,10 @@ def query_qa(req: QueryRequest, request: Request) -> QueryResponse:
     elif hasattr(req, 'compliance_domain') and req.compliance_domain:
         compliance_domain = req.compliance_domain
 
-    # Execute the query with domain filtering if specified
     answer, sources = answer_question(
-        question=req.question,
-        match_threshold=getattr(req, 'match_threshold', 0.75),
-        match_count=getattr(req, 'match_count', 5),
+        question=validated_req.question,
+        match_threshold=validated_req.match_threshold,
+        match_count=validated_req.match_count,
         compliance_domain=compliance_domain,
         document_version=getattr(req, 'document_version'),
         document_tags=getattr(req, 'document_tags', [])

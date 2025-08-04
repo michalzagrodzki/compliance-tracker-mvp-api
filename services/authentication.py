@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Optional, Dict, List
+from typing import Any, Optional, Dict, List
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import Client
@@ -233,6 +233,16 @@ class AuthService:
                 detail="Authentication failed"
             )
 
+class AuthenticatedUser:
+    def __init__(self, user_id: str, email: str, user_data: Dict[str, Any]):
+        self.user_id = user_id
+        self.email = email
+        self.user_data = user_data
+        self.is_active = user_data.get("is_active", True)
+    
+    def __str__(self):
+        return f"User(id={self.user_id}, email={self.email})"
+    
 auth_service = AuthService()
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserResponse:

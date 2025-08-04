@@ -19,6 +19,7 @@ dependencies = [
   "greenlet",
   "pgvector",
   "postgrest",
+  "bleach",
 ]
 
 [project.optional-dependencies]
