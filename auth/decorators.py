@@ -38,8 +38,8 @@ def authorize(
     
     Usage:
     @authorize(domains=["ISO27001"], allowed_roles=["admin"])
-    def my_endpoint(audit_session_id: str, validated_user: ValidatedUser):
-        # validated_user is automatically injected and validated
+    def my_endpoint(audit_session_id: str, current_user: ValidatedUser):
+        # current_user is automatically injected and validated
         pass
     """
     def create_dependency():
