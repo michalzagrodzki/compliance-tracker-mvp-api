@@ -5,6 +5,7 @@ import uuid
 from fastapi import Depends, FastAPI, HTTPException, APIRouter, File, Request, UploadFile, Form, Path, Body, Query
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
+from auth.decorators import ValidatedUser, authorize
 from security.input_validator import SecurityError, validate_and_secure_query_request
 from services.authentication import AuthenticatedUser, RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
 from services.chat_history import get_audit_session_history, get_chat_history, get_chat_history_item, get_domain_history, get_user_history, insert_chat_history
@@ -386,32 +387,6 @@ def get_tag_constants_endpoint(
     tags=["RAG"],
 )
 def query_qa(req: QueryRequest, request: Request, current_user: AuthenticatedUser = Depends(get_current_user)) -> QueryResponse:
-    user_data = get_user_by_id(current_user.user_id)
-        
-    if not user_data.get("is_active", False):
-        logging.warning(f"Inactive user blocked: {user_data.get('email')} ({current_user.user_id})")
-        raise HTTPException(
-            status_code=403,
-            detail="Your account has been deactivated. Please contact support."
-        )
-    
-    user_role = user_data.get("role", "user")
-    if user_role in ["restricted", "banned"]:
-        logging.warning(f"Restricted user blocked: {user_data.get('email')} (role: {user_role})")
-        raise HTTPException(
-            status_code=403,
-            detail="Your account has restricted access. Contact administrator."
-        )
-    
-    if req.compliance_domain:
-        user_compliance_domains = user_data.get("compliance_domains", [])
-        if req.compliance_domain not in user_compliance_domains:
-            logging.warning(f"User {user_data.get('email')} denied access to domain {req.compliance_domain}")
-            raise HTTPException(
-                status_code=403,
-                detail=f"You don't have access to compliance domain: {req.compliance_domain}"
-            )
-    
     validated_req = validate_and_secure_query_request(req, request)
     start_time = time.time()
     
@@ -1791,9 +1766,10 @@ def get_user_compliance_gaps(
     response_model=List[Dict[str, Any]],
     tags=["Compliance Gaps"],
 )
+@authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_session_compliance_gaps(
     audit_session_id: str = Path(..., description="Audit session UUID"),
-    current_user: UserResponse = Depends(get_current_active_user)
+    current_user: ValidatedUser = None
 ) -> List[Dict[str, Any]]:
     return get_gaps_by_audit_session(audit_session_id)
 
