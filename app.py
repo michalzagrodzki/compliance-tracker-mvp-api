@@ -116,6 +116,8 @@ from services.audit_reports import (
     list_audit_reports,
     get_audit_report_by_id,
     create_audit_report,
+    list_audit_reports_by_compliance_domain,
+    list_audit_reports_by_compliance_domains,
     update_audit_report,
     delete_audit_report,
     generate_audit_report_from_session,
@@ -224,8 +226,8 @@ def logout(credentials: HTTPAuthorizationCredentials = Depends(get_current_user)
     description="Get the profile of the currently authenticated user",
     tags=["Authentication"]
 )
-@authorize(allowed_roles=["admin", "compliance_officer", "user"])
-def get_me(current_user: UserResponse = Depends(get_current_user)):
+@authorize(allowed_roles=["admin", "compliance_officer", "reader"], check_active=True)
+def get_me(current_user: ValidatedUser = None):
     return current_user
 
 @router_v1.get("/documents",
@@ -1823,7 +1825,7 @@ def get_user_compliance_gaps(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
     assigned_only: bool = Query(False, description="If true, only show gaps assigned to this user"),
-    current_user: UserResponse = Depends(get_current_active_user)
+    current_user: ValidatedUser = Depends(get_current_active_user)
 ) -> List[Dict[str, Any]]:
     return get_gaps_by_user(user_id, skip, limit, assigned_only)
 
@@ -1895,6 +1897,38 @@ def get_all_audit_reports(
         generated_after=generated_after,
         generated_before=generated_before
     )
+
+@router_v1.get("/audit-reports/compliance-domain",
+    summary="List audit reports by compliance domains linked to user",
+    description="Get audit reports by compliance domains linked to user",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit Reports"],
+)
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
+def get_all_audit_reports(
+    current_user: ValidatedUser = None
+) -> List[Dict[str, Any]]:
+    user_compliance_domains = getattr(current_user, 'compliance_domains', [])
+    
+    if not user_compliance_domains:
+        raise HTTPException(
+            status_code=403, 
+            detail="Access denied."
+        )
+    return list_audit_reports_by_compliance_domains(user_compliance_domains)
+
+@router_v1.get("/audit-reports/compliance-domain/{compliance_domain_code}",
+    summary="List audit reports by compliance domain",
+    description="Get audit reports by compliance domain",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit Reports"],
+)
+@authorize(allowed_roles=["admin"], check_active=True)
+def get_all_audit_reports(
+    compliance_domain_code: str = Path(..., description="compliance_domain_code"),
+    current_user: ValidatedUser = None
+) -> List[Dict[str, Any]]:
+    return list_audit_reports_by_compliance_domain(compliance_domain_code)
 
 @router_v1.get("/audit-reports/{report_id}",
     summary="Get audit report by ID",

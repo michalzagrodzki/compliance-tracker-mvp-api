@@ -9,8 +9,8 @@ from services.user_management import get_user_by_id
 logger = logging.getLogger(__name__)
 
 class ValidatedUser(AuthenticatedUser):
-    def __init__(self, user_id: str, email: str, user_data: Dict[str, Any]):
-        super().__init__(user_id, email, user_data)
+    def __init__(self, id: str, email: str, user_data: Dict[str, Any]):
+        super().__init__(id, email, user_data)
         self.full_name = user_data.get("full_name")
         self.role = user_data.get("role")
         self.compliance_domains = user_data.get("compliance_domains", [])

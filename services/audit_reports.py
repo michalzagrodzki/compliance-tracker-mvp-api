@@ -63,6 +63,50 @@ def list_audit_reports(
         logger.error("Failed to fetch audit reports", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
+def list_audit_reports_by_compliance_domains(
+    compliance_domains: List[str]
+) -> List[Dict[str, Any]]:
+    try:
+        logger.info(f"Fetching audit reports for compliance domains: {compliance_domains}")
+        
+        resp = (
+            supabase
+            .table(settings.supabase_table_audit_reports)
+            .select("*")
+            .in_("compliance_domain", compliance_domains)
+            .order("report_generated_at", desc=True)
+            .execute()
+        )
+        
+        logger.info(f"Retrieved {len(resp.data)} audit reports for domains {compliance_domains}")
+        return resp.data
+        
+    except Exception as e:
+        logger.error("Failed to fetch audit reports by compliance domains", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+def list_audit_reports_by_compliance_domain(
+    compliance_domain: str
+) -> List[Dict[str, Any]]:
+    try:
+        logger.info(f"Fetching audit reports for compliance domains: {compliance_domain}")
+        
+        resp = (
+            supabase
+            .table(settings.supabase_table_audit_reports)
+            .select("*")
+            .in_("compliance_domain", compliance_domain)
+            .order("report_generated_at", desc=True)
+            .execute()
+        )
+        
+        logger.info(f"Retrieved {len(resp.data)} audit reports for domains {compliance_domain}")
+        return resp.data
+        
+    except Exception as e:
+        logger.error("Failed to fetch audit reports by compliance domains", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    
 def get_audit_report_by_id(report_id: str) -> Dict[str, Any]:
     """Get a specific audit report by ID"""
     try:

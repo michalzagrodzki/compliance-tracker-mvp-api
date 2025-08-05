@@ -234,8 +234,8 @@ class AuthService:
             )
 
 class AuthenticatedUser:
-    def __init__(self, user_id: str, email: str, user_data: Dict[str, Any]):
-        self.user_id = user_id
+    def __init__(self, id: str, email: str, user_data: Dict[str, Any]):
+        self.id = id
         self.email = email
         self.user_data = user_data
         self.is_active = user_data.get("is_active", True)
