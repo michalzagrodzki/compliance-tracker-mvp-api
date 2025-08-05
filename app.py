@@ -175,6 +175,7 @@ router_v1 = APIRouter(prefix="/v1")
 
 @router_v1.get("/test-db",
                tags=["Health"])
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def test_db():
     data = check_database_connection()
     return {"status": "ok", "result": data}
@@ -205,6 +206,7 @@ def login(login_data: UserLogin):
     description="Get a new access token using refresh token",
     tags=["Authentication"]
 )
+@authorize(check_active=True)
 def refresh_token(refresh_data: RefreshTokenRequest):
     return auth_service.refresh_token(refresh_data)
 
@@ -222,6 +224,7 @@ def logout(credentials: HTTPAuthorizationCredentials = Depends(get_current_user)
     description="Get the profile of the currently authenticated user",
     tags=["Authentication"]
 )
+@authorize(allowed_roles=["admin", "compliance_officer", "user"])
 def get_me(current_user: UserResponse = Depends(get_current_user)):
     return current_user
 
@@ -231,6 +234,7 @@ def get_me(current_user: UserResponse = Depends(get_current_user)):
     response_model=List[Dict[str, Any]],
     tags=["Documents"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_all_documents(
     skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
@@ -262,6 +266,7 @@ def get_all_documents(
     response_model=List[Dict[str, Any]],
     tags=["Documents"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_documents_by_tags_endpoint(
     request: DocumentTagsRequest,
     current_user: UserResponse = Depends(get_current_active_user)
@@ -280,6 +285,7 @@ def get_documents_by_tags_endpoint(
     response_model=List[Dict[str, Any]],
     tags=["Documents"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_documents_by_source(source_filename: str) -> Any:
     return get_documents_by_source_filename(source_filename)
 
@@ -290,6 +296,7 @@ def get_documents_by_source(source_filename: str) -> Any:
     response_model=List[Dict[str, Any]],
     tags=["Documents"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_documents_by_domain(
     compliance_domain: str,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -303,6 +310,7 @@ def get_documents_by_domain(
     response_model=List[Dict[str, Any]],
     tags=["Documents"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_documents_by_version(
     document_version: str,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -316,6 +324,7 @@ def get_documents_by_version(
     response_model=List[Dict[str, Any]],
     tags=["Documents"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_documents_with_tag(
     tag: str = Path(..., description="Tag to search for"),
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
@@ -337,6 +346,7 @@ def get_documents_with_tag(
     response_model=List[Dict[str, Any]],
     tags=["Documents"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_documents_by_domain_version(
     compliance_domain: str,
     document_version: str,
@@ -351,6 +361,7 @@ def get_documents_by_domain_version(
     response_model=Dict[str, Any],
     tags=["Documents"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer", "reader"], check_active=True)
 def get_tag_constants_endpoint(
     current_user: UserResponse = Depends(get_current_active_user)
 ) -> Dict[str, Any]:
@@ -386,6 +397,7 @@ def get_tag_constants_endpoint(
     description="Retrieval-Augmented Generation over ingested documents with full audit trail logging.",
     tags=["RAG"],
 )
+@authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 def query_qa(req: QueryRequest, request: Request, current_user: AuthenticatedUser = Depends(get_current_user)) -> QueryResponse:
     validated_req = validate_and_secure_query_request(req, request)
     start_time = time.time()
@@ -492,6 +504,7 @@ def query_qa(req: QueryRequest, request: Request, current_user: AuthenticatedUse
     description="Streamed responses with full audit trail logging and compliance domain filtering.",
     tags=["RAG"],
 )
+@authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 def query_stream(req: QueryRequest, request: Request):
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
@@ -595,6 +608,7 @@ def query_stream(req: QueryRequest, request: Request):
     description="Returns a single chat history entry by its unique ID",
     tags=["History"],
 )
+@authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 def read_history_item(
     item_id: int, 
     current_user: UserResponse = Depends(get_current_active_user)
@@ -607,6 +621,7 @@ def read_history_item(
     description="Returns chat history with optional filtering by audit session, domain, or user",
     tags=["History"],
 )
+@authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 def read_history(
     conversation_id: str,
     audit_session_id: Optional[str] = Query(None, description="Filter by audit session UUID"),
@@ -628,6 +643,7 @@ def read_history(
     description="Returns all chat interactions within a specific audit session across conversations",
     tags=["History", "Audit"],
 )
+@authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 def read_audit_session_history(
     audit_session_id: str,
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain")
@@ -643,6 +659,7 @@ def read_audit_session_history(
     description="Returns all chat history for a specific compliance domain (e.g., GDPR, ISO27001)",
     tags=["History", "Compliance"],
 )
+@authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 def read_domain_history(
     domain_code: str,
     audit_session_id: Optional[str] = Query(None, description="Filter by audit session"),
@@ -664,6 +681,7 @@ def read_domain_history(
     description="Returns all chat history for a specific user with optional domain filtering",
     tags=["History", "Users"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def read_user_history(
     user_id: str,
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
@@ -685,6 +703,7 @@ def read_user_history(
     description="Ingests a PDF, splits into chunks, stores embeddings in Supabase with compliance domain and tag tracking",
     tags=["Ingestion"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def upload_pdf(
     file: UploadFile = File(...),
     compliance_domain: Optional[str] = Form(None, description="Compliance domain (e.g., 'GDPR', 'ISO_27001', 'SOX')"),
@@ -772,6 +791,7 @@ def upload_pdf(
     response_model=List[Dict[str, Any]],
     tags=["Ingestion"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_all_pdf_ingestions(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
@@ -785,6 +805,7 @@ def get_all_pdf_ingestions(
     response_model=Dict[str, Any],
     tags=["Ingestion"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_pdf_ingestion(
     ingestion_id: str = Path(..., description="PDF ingestion UUID"),
     current_user: UserResponse = Depends(get_current_active_user)
@@ -797,6 +818,7 @@ def get_pdf_ingestion(
     response_model=List[Dict[str, Any]],
     tags=["Ingestion"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_pdf_ingestions_by_domain(
     compliance_domain: str = Path(..., description="Compliance domain code"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -813,6 +835,7 @@ def get_pdf_ingestions_by_domain(
     response_model=List[Dict[str, Any]],
     tags=["Ingestion"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_pdf_ingestions_by_user_endpoint(
     user_id: str = Path(..., description="User UUID"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -827,6 +850,7 @@ def get_pdf_ingestions_by_user_endpoint(
     response_model=List[Dict[str, Any]],
     tags=["Ingestion"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_pdf_ingestions_by_version_endpoint(
     document_version: str = Path(..., description="Document version (supports partial matching)"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -847,6 +871,7 @@ def get_pdf_ingestions_by_version_endpoint(
     response_model=List[Dict[str, Any]],
     tags=["Ingestion"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def search_pdf_ingestions_endpoint(
     search_request: PdfIngestionSearchRequest,
     current_user: UserResponse = Depends(get_current_active_user)
@@ -871,6 +896,7 @@ def search_pdf_ingestions_endpoint(
     response_model=Dict[str, Any],
     tags=["Ingestion"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def delete_pdf_ingestion_endpoint(
     ingestion_id: str = Path(..., description="PDF ingestion UUID"),
     hard_delete: bool = Query(False, description="If true, permanently delete the record (not recommended for audit trail)"),
@@ -884,6 +910,7 @@ def delete_pdf_ingestion_endpoint(
     response_model=Dict[str, Any],
     tags=["Ingestion"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer", "reader"], check_active=True)
 def get_tag_constants_endpoint(
     current_user: UserResponse = Depends(get_current_active_user)
 ) -> Dict[str, Any]:
@@ -919,6 +946,7 @@ def get_tag_constants_endpoint(
     response_model=List[ComplianceDomain],
     tags=["Compliance"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_compliance_domains(
     skip: Optional[int] = Query(0, ge=0, description="Number of domains to skip for pagination"),
     limit: Optional[int] = Query(10, ge=1, le=100, description="Maximum number of domains to return"),
@@ -932,6 +960,7 @@ def get_compliance_domains(
     response_model=ComplianceDomain,
     tags=["Compliance"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_compliance_domain(code: str) -> ComplianceDomain:
     return get_compliance_domain_by_code(code)
 
@@ -941,6 +970,7 @@ def get_compliance_domain(code: str) -> ComplianceDomain:
     response_model=List[AuditSessionResponse],
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_all_audit_sessions(
     skip: int = Query(0, ge=0, description="Number of records to skip"), 
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return")
@@ -954,6 +984,7 @@ def get_all_audit_sessions(
     response_model=List[AuditSessionResponse],
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_user_audit_sessions(
     user_id: str = Path(..., description="User ID to filter sessions"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -968,6 +999,7 @@ def get_user_audit_sessions(
     response_model=AuditSessionResponse,
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_session(
     session_id: str = Path(..., description="Audit session ID")
 ) -> AuditSessionResponse:
@@ -980,6 +1012,7 @@ def get_audit_session(
     response_model=List[AuditSessionResponse],
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_sessions_by_status(
     is_active: bool = Path(..., description="Active status filter (true/false)"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -996,6 +1029,7 @@ def get_audit_sessions_by_status(
     response_model=List[AuditSessionResponse],
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_sessions_by_compliance_domain(
     compliance_domain: str = Path(..., description="Compliance domain (e.g. ISO27001)"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -1011,6 +1045,7 @@ def get_audit_sessions_by_compliance_domain(
     response_model=List[AuditSessionResponse],
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def search_audit_sessions_endpoint(
     search_request: AuditSessionSearchRequest
 ) -> List[AuditSessionResponse]:
@@ -1031,6 +1066,7 @@ def search_audit_sessions_endpoint(
     tags=["Audit Sessions"],
     status_code=201
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def create_new_audit_session(
     request: Request,
     session_data: AuditSessionCreate = Body(..., description="Audit session data"),
@@ -1055,6 +1091,7 @@ def create_new_audit_session(
     response_model=AuditSessionResponse,
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def update_existing_audit_session(
     session_id: str = Path(..., description="Audit session ID to update"),
     update_data: AuditSessionUpdate = Body(..., description="Fields to update")
@@ -1073,6 +1110,7 @@ def update_existing_audit_session(
     response_model=AuditSessionResponse,
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def close_audit_session(
     session_id: str = Path(..., description="Audit session ID to close"),
     session_summary: Optional[str] = Body(None, description="Optional summary of the session", embed=True)
@@ -1090,6 +1128,7 @@ def close_audit_session(
     response_model=AuditSessionResponse,
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def activate_audit_session(
     session_id: str = Path(..., description="Audit session ID to reactivate")
 ) -> AuditSessionResponse:
@@ -1105,12 +1144,12 @@ def activate_audit_session(
     response_model=AuditSessionResponse,
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def delete_audit_session_endpoint(
     session_id: str = Path(..., description="Audit session ID to delete"),
     hard_delete: bool = Query(False, description="If true, permanently delete the session (not recommended for compliance)")
 ) -> Dict[str, Any]:
-    
-    
+
     return delete_audit_session(
         session_id=session_id,
         soft_delete=not hard_delete
@@ -1123,6 +1162,7 @@ def delete_audit_session_endpoint(
     tags=["Audit Sessions"],
     status_code=201
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def add_pdf_ingestion_to_audit_session(
     session_id: str = Path(..., description="Audit session ID"),
     request_data: AuditSessionPdfIngestionCreate = Body(..., description="PDF ingestion to add"),
@@ -1144,6 +1184,7 @@ def add_pdf_ingestion_to_audit_session(
     tags=["Audit Sessions"],
     status_code=201
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def bulk_add_pdf_ingestions_to_audit_session(
     session_id: str = Path(..., description="Audit session ID"),
     request_data: AuditSessionPdfIngestionBulkCreate = Body(..., description="PDF ingestions to add"),
@@ -1166,6 +1207,7 @@ def bulk_add_pdf_ingestions_to_audit_session(
     response_model=List[PdfIngestionWithRelationship],
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_session_pdf_ingestions(
     session_id: str = Path(..., description="Audit session ID"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -1188,6 +1230,7 @@ def get_audit_session_pdf_ingestions(
     response_model=Dict[str, Any],
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def remove_pdf_ingestion_from_audit_session(
     session_id: str = Path(..., description="Audit session ID"),
     pdf_ingestion_id: str = Path(..., description="PDF ingestion ID"),
@@ -1206,6 +1249,7 @@ def remove_pdf_ingestion_from_audit_session(
     response_model=AuditReportBulkActionRequest,
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def bulk_remove_pdf_ingestions_from_audit_session(
     session_id: str = Path(..., description="Audit session ID"),
     request_data: AuditSessionPdfIngestionBulkRemove = Body(..., description="PDF ingestions to remove"),
@@ -1226,6 +1270,7 @@ def bulk_remove_pdf_ingestions_from_audit_session(
     response_model=Dict[str, Any],
     tags=["Audit Sessions"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_session_statistics_endpoint(
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
@@ -1245,6 +1290,7 @@ def get_audit_session_statistics_endpoint(
     response_model=List[Dict[str, Any]],
     tags=["Audit"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_all_document_access_logs(
     skip: int = Query(0, ge=0), 
     limit: int = Query(10, ge=1, le=100)
@@ -1257,6 +1303,7 @@ def get_all_document_access_logs(
     response_model=Dict[str, Any],
     tags=["Audit"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_document_access_log(log_id: str) -> Any:
     return get_document_access_log_by_id(log_id)
 
@@ -1266,6 +1313,7 @@ def get_document_access_log(log_id: str) -> Any:
     response_model=List[Dict[str, Any]],
     tags=["Audit"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_document_access_logs_by_user(
     user_id: str,
     skip: int = Query(0, ge=0), 
@@ -1279,6 +1327,7 @@ def get_document_access_logs_by_user(
     response_model=List[Dict[str, Any]],
     tags=["Audit"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_document_access_logs_by_document(
     document_id: str,
     skip: int = Query(0, ge=0), 
@@ -1292,6 +1341,7 @@ def get_document_access_logs_by_document(
     response_model=List[Dict[str, Any]],
     tags=["Audit"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_document_access_logs_by_audit_session(
     audit_session_id: str,
     skip: int = Query(0, ge=0), 
@@ -1305,6 +1355,7 @@ def get_document_access_logs_by_audit_session(
     response_model=List[Dict[str, Any]],
     tags=["Audit"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_filtered_document_access_logs(
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
     document_id: Optional[str] = Query(None, description="Filter by document ID"),
@@ -1322,13 +1373,13 @@ def get_filtered_document_access_logs(
         limit=limit
     )
 
-# User management endpoints (Admin only)
 @router_v1.get("/users",
     summary="List all users",
     description="Get paginated list of users (Admin only)",
     response_model=List[Dict[str, Any]],
     tags=["Users"]
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_all_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100),
@@ -1344,6 +1395,7 @@ def get_all_users(
     response_model=Dict[str, Any],
     tags=["Users"]
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_user(
     user_id: str,
     current_user: UserResponse = Depends(require_admin)
@@ -1356,6 +1408,7 @@ def get_user(
     response_model=Dict[str, Any],
     tags=["Users"]
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def update_user_profile(
     user_id: str,
     user_update: UserUpdate,
@@ -1369,6 +1422,7 @@ def update_user_profile(
     response_model=Dict[str, Any],
     tags=["Users"]
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def deactivate_user_account(
     user_id: str,
     current_user: UserResponse = Depends(require_admin)
@@ -1381,6 +1435,7 @@ def deactivate_user_account(
     response_model=Dict[str, Any],
     tags=["Users"]
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def activate_user_account(
     user_id: str,
     current_user: UserResponse = Depends(require_admin)
@@ -1393,6 +1448,7 @@ def activate_user_account(
     response_model=List[Dict[str, Any]],
     tags=["Users"]
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_users_by_role_endpoint(
     role: str,
     skip: int = Query(0, ge=0),
@@ -1407,6 +1463,7 @@ def get_users_by_role_endpoint(
     response_model=List[Dict[str, Any]],
     tags=["Users"]
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_users_by_domain_endpoint(
     domain: str,
     skip: int = Query(0, ge=0),
@@ -1421,6 +1478,7 @@ def get_users_by_domain_endpoint(
     response_model=List[Dict[str, Any]],
     tags=["Compliance Gaps"],
     )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_all_compliance_gaps(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
@@ -1455,6 +1513,7 @@ def get_all_compliance_gaps(
     response_model=Dict[str, Any],
     tags=["Compliance Gaps"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_compliance_gap(
     gap_id: str = Path(..., description="Compliance gap UUID"),
     current_user: UserResponse = Depends(get_current_active_user)
@@ -1468,6 +1527,7 @@ def get_compliance_gap(
     tags=["Compliance Gaps"],
     status_code=201
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def create_new_compliance_gap(
     request: Request, 
     request_data: Union[ComplianceGapCreate, ComplianceGapFromChatHistoryRequest] = Body(
@@ -1601,6 +1661,7 @@ def create_new_compliance_gap(
     response_model=Dict[str, Any],
     tags=["Compliance Gaps"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def update_existing_compliance_gap(
     gap_id: str = Path(..., description="Compliance gap UUID"),
     update_data: ComplianceGapUpdate = Body(..., description="Fields to update"),
@@ -1632,6 +1693,7 @@ def update_existing_compliance_gap(
     response_model=Dict[str, Any],
     tags=["Compliance Gaps"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def update_compliance_gap_status(
     gap_id: str = Path(..., description="Compliance gap UUID"),
     status_update: ComplianceGapStatusUpdate = Body(..., description="New status data"),
@@ -1645,6 +1707,7 @@ def update_compliance_gap_status(
     response_model=Dict[str, Any],
     tags=["Compliance Gaps"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def assign_compliance_gap(
     gap_id: str = Path(..., description="Compliance gap UUID"),
     assigned_to: str = Body(..., description="User ID to assign to", embed=True),
@@ -1659,6 +1722,7 @@ def assign_compliance_gap(
     response_model=Dict[str, Any],
     tags=["Compliance Gaps"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def review_compliance_gap(
     gap_id: str = Path(..., description="Compliance gap UUID"),
     reviewer_notes: Optional[str] = Body(None, description="Notes from the review", embed=True),
@@ -1672,6 +1736,7 @@ def review_compliance_gap(
     description="Creates a detailed, actionable recommendation using OpenAI API based on chat history context and specified recommendation type. Returns formatted recommendation text with implementation steps.",
     tags=["Compliance Gaps"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def create_compliance_recommendation(
     req: ComplianceRecommendationRequest,
     request: Request,
@@ -1736,6 +1801,7 @@ def create_compliance_recommendation(
     response_model=List[Dict[str, Any]],
     tags=["Compliance Gaps"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_domain_compliance_gaps(
     domain_code: str = Path(..., description="Compliance domain code"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -1751,6 +1817,7 @@ def get_domain_compliance_gaps(
     response_model=List[Dict[str, Any]],
     tags=["Compliance Gaps"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_user_compliance_gaps(
     user_id: str = Path(..., description="User UUID"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -1766,7 +1833,7 @@ def get_user_compliance_gaps(
     response_model=List[Dict[str, Any]],
     tags=["Compliance Gaps"],
 )
-@authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_session_compliance_gaps(
     audit_session_id: str = Path(..., description="Audit session UUID"),
     current_user: ValidatedUser = None
@@ -1779,6 +1846,7 @@ def get_audit_session_compliance_gaps(
     response_model=Dict[str, Any],
     tags=["Compliance Gaps"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_compliance_gap_statistics(
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
@@ -1799,6 +1867,7 @@ def get_compliance_gap_statistics(
     response_model=List[Dict[str, Any]],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def get_all_audit_reports(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
@@ -1833,6 +1902,7 @@ def get_all_audit_reports(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_report(
     report_id: str = Path(..., description="Audit report UUID"),
     current_user: UserResponse = Depends(get_current_active_user)
@@ -1846,6 +1916,7 @@ def get_audit_report(
     tags=["Audit Reports"],
     status_code=201
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def create_new_audit_report(
     report_data: AuditReportCreate = Body(..., description="Audit report data"),
     current_user: UserResponse = Depends(require_compliance_officer_or_admin)
@@ -1884,6 +1955,7 @@ def create_new_audit_report(
     tags=["Audit Reports"],
     status_code=201
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def generate_audit_report(
     generate_request: AuditReportGenerateRequest = Body(..., description="Report generation parameters"),
     current_user: UserResponse = Depends(require_compliance_officer_or_admin)
@@ -1924,6 +1996,7 @@ def generate_audit_report(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def update_existing_audit_report(
     report_id: str = Path(..., description="Audit report UUID"),
     update_data: AuditReportUpdate = Body(..., description="Fields to update"),
@@ -1951,6 +2024,7 @@ def update_existing_audit_report(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def update_audit_report_status(
     report_id: str = Path(..., description="Audit report UUID"),
     status_update: AuditReportStatusUpdate = Body(..., description="New status data"),
@@ -1981,6 +2055,7 @@ def update_audit_report_status(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def delete_existing_audit_report(
     report_id: str = Path(..., description="Audit report UUID"),
     hard_delete: bool = Query(False, description="If true, permanently delete (not recommended)"),
@@ -1994,6 +2069,7 @@ def delete_existing_audit_report(
     response_model=List[Dict[str, Any]],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def search_audit_reports(
     search_request: AuditReportSearchRequest = Body(..., description="Search criteria"),
     current_user: UserResponse = Depends(get_current_active_user)
@@ -2018,6 +2094,7 @@ def search_audit_reports(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_report_statistics_endpoint(
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
@@ -2038,6 +2115,7 @@ def get_audit_report_statistics_endpoint(
     response_model=List[Dict[str, Any]],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_report_versions(
     report_id: str = Path(..., description="Audit report UUID"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -2052,6 +2130,7 @@ def get_audit_report_versions(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_latest_audit_report_version_endpoint(
     report_id: str = Path(..., description="Audit report UUID"),
     current_user: UserResponse = Depends(get_current_active_user)
@@ -2064,6 +2143,7 @@ def get_latest_audit_report_version_endpoint(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_report_version_by_number_endpoint(
     report_id: str = Path(..., description="Audit report UUID"),
     version_number: int = Path(..., description="Version number", ge=1),
@@ -2077,6 +2157,7 @@ def get_audit_report_version_by_number_endpoint(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def compare_audit_report_versions_endpoint(
     report_id: str = Path(..., description="Audit report UUID"),
     version1: int = Path(..., description="First version number", ge=1),
@@ -2091,6 +2172,7 @@ def compare_audit_report_versions_endpoint(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def restore_audit_report_version_endpoint(
     report_id: str = Path(..., description="Audit report UUID"),
     version_number: int = Path(..., description="Version number to restore to", ge=1),
@@ -2105,6 +2187,7 @@ def restore_audit_report_version_endpoint(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_report_version_history_summary(
     report_id: str = Path(..., description="Audit report UUID"),
     current_user: UserResponse = Depends(get_current_active_user)
@@ -2117,6 +2200,7 @@ def get_audit_report_version_history_summary(
     description="Creates a professional executive summary using OpenAI API based on audit report data and identified compliance gaps. Returns formatted markdown suitable for executive presentation.",
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def create_executive_summary(
     req: ExecutiveSummaryRequest,
     request: Request,
@@ -2210,6 +2294,7 @@ def create_executive_summary(
     description="Creates a professional threat intelligence analysis using OpenAI API based on audit report data and identified compliance gaps. Returns formatted markdown suitable for security teams and executives.",
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def create_threat_intelligence_analysis(
     req: ThreatIntelligenceRequest,
     request: Request,
@@ -2300,6 +2385,7 @@ def create_threat_intelligence_analysis(
     description="Creates a professional control risk prioritization analysis using OpenAI API based on audit report data and identified compliance gaps. Returns formatted markdown suitable for C-level executives and board members with strategic business intelligence.",
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def create_control_risk_prioritization(
     req: ThreatIntelligenceRequest,
     request: Request,
@@ -2397,6 +2483,7 @@ def create_control_risk_prioritization(
     description="Creates a professional target audience-specific summary using OpenAI API based on audit report data and identified compliance gaps. Returns formatted markdown tailored to the specific audience needs (executives, compliance_team, auditors, regulators, board).",
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def create_target_audience_summary(
     req: ExecutiveSummaryRequest,
     request: Request,
@@ -2508,6 +2595,7 @@ def create_target_audience_summary(
     response_model=List[Dict[str, Any]],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_all_audit_report_distributions(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
@@ -2532,6 +2620,7 @@ def get_all_audit_report_distributions(
     response_model=List[Dict[str, Any]],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_report_distributions(
     report_id: str = Path(..., description="Audit report UUID"),
     current_user: UserResponse = Depends(get_current_active_user)
@@ -2545,6 +2634,7 @@ def get_audit_report_distributions(
     tags=["Audit Reports"],
     status_code=201
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def distribute_audit_report(
     report_id: str = Path(..., description="Audit report UUID"),
     distribution_data: AuditReportDistributionCreate = Body(..., description="Distribution details"),
@@ -2567,6 +2657,7 @@ def distribute_audit_report(
     tags=["Audit Reports"],
     status_code=201
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def bulk_distribute_audit_report(
     report_id: str = Path(..., description="Audit report UUID"),
     recipients: List[str] = Body(..., description="List of recipient emails"),
@@ -2590,6 +2681,7 @@ def bulk_distribute_audit_report(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def log_audit_report_distribution_access(
     request: Request,
     distribution_id: str = Path(..., description="Distribution UUID"),
@@ -2610,6 +2702,7 @@ def log_audit_report_distribution_access(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def deactivate_audit_report_distribution(
     distribution_id: str = Path(..., description="Distribution UUID"),
     current_user: UserResponse = Depends(require_compliance_officer_or_admin)
@@ -2622,6 +2715,7 @@ def deactivate_audit_report_distribution(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def reactivate_audit_report_distribution(
     distribution_id: str = Path(..., description="Distribution UUID"),
     current_user: UserResponse = Depends(require_compliance_officer_or_admin)
@@ -2634,6 +2728,7 @@ def reactivate_audit_report_distribution(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def update_audit_report_distribution_expiry(
     distribution_id: str = Path(..., description="Distribution UUID"),
     new_expiry_date: Optional[datetime] = Body(..., description="New expiry date (null for no expiry)", embed=True),
@@ -2647,6 +2742,7 @@ def update_audit_report_distribution_expiry(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_report_distribution(
     distribution_id: str = Path(..., description="Distribution UUID"),
     current_user: UserResponse = Depends(get_current_active_user)
@@ -2659,6 +2755,7 @@ def get_audit_report_distribution(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_report_distribution_access_summary(
     distribution_id: str = Path(..., description="Distribution UUID"),
     current_user: UserResponse = Depends(get_current_active_user)
@@ -2671,6 +2768,7 @@ def get_audit_report_distribution_access_summary(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def delete_audit_report_distribution(
     distribution_id: str = Path(..., description="Distribution UUID"),
     current_user: UserResponse = Depends(require_admin)
@@ -2683,6 +2781,7 @@ def delete_audit_report_distribution(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_report_distribution_statistics(
     audit_report_id: Optional[str] = Query(None, description="Filter by audit report ID"),
     start_date: Optional[datetime] = Query(None, description="Filter distributions created after this date"),
@@ -2701,6 +2800,7 @@ def get_audit_report_distribution_statistics(
     response_model=Dict[str, Any],
     tags=["Audit Reports"],
 )
+@authorize(allowed_roles=["admin"], check_active=True)
 def cleanup_expired_audit_report_distributions(
     current_user: UserResponse = Depends(require_admin)
 ) -> Dict[str, Any]:
