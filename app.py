@@ -7,11 +7,12 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
 from auth.decorators import ValidatedUser, authorize
 from security.input_validator import SecurityError, validate_and_secure_query_request
-from services.authentication import AuthenticatedUser, RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
+from services.audit_log import create_audit_log, get_audit_log_by_id, list_audit_logs, list_audit_logs_by_audit_session, list_audit_logs_by_compliance_domain, list_audit_logs_by_object, list_audit_logs_by_user, list_audit_logs_filtered
+from services.authentication import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
 from services.chat_history import get_audit_session_history, get_chat_history, get_chat_history_item, get_domain_history, get_user_history, insert_chat_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.compliance_gap_recommendation import generate_compliance_recommendation
-from services.compliance_gaps import assign_gap_to_user, create_compliance_gap, get_chat_history_by_id, get_compliance_gap_by_id, get_compliance_gaps_statistics, get_document_by_id, get_gaps_by_audit_session, get_gaps_by_domain, get_gaps_by_user, list_compliance_gaps, list_compliance_gaps_by_compliance_domains, log_document_access, mark_gap_reviewed, update_compliance_gap, update_gap_status
+from services.compliance_gaps import assign_gap_to_user, create_compliance_gap, get_chat_history_by_id, get_compliance_gap_by_id, get_compliance_gaps_statistics, get_document_by_id, get_gaps_by_audit_session, get_gaps_by_domain, get_gaps_by_user, list_compliance_gaps, list_compliance_gaps_by_compliance_domains, mark_gap_reviewed, update_compliance_gap, update_gap_status
 from services.control_risk_prioritization import ControlRiskPrioritizationResponse, calculate_risk_prioritization_metrics, generate_control_risk_prioritization
 from services.db_check import check_database_connection
 from services.document import (
@@ -75,14 +76,6 @@ from services.audit_sessions import (
     search_audit_sessions,
     create_audit_session,
     update_audit_session
-)
-from services.document_access_log import (
-    list_document_access_logs,
-    get_document_access_log_by_id,
-    list_document_access_logs_by_user,
-    list_document_access_logs_by_document,
-    list_document_access_logs_by_audit_session,
-    list_document_access_logs_filtered
 )
 from services.authentication import (
     auth_service, 
@@ -323,7 +316,6 @@ def get_documents_with_tag(
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
-    current_user: ValidatedUser = None
 ) -> List[Dict[str, Any]]:
     return get_documents_by_tags(
         tags=[tag],
@@ -393,6 +385,7 @@ def get_tag_constants_endpoint(
 def query_qa(
     req: QueryRequest, 
     request: Request,
+    current_user: ValidatedUser = None
 ) -> QueryResponse:
     validated_req = validate_and_secure_query_request(req, request)
     start_time = time.time()
@@ -448,7 +441,7 @@ def query_qa(
             source_document_ids=source_document_ids,
             match_threshold=getattr(req, 'match_threshold', 0.75),
             match_count=getattr(req, 'match_count', 5),
-            user_id=getattr(req, 'user_id', None),
+            user_id=current_user.id,
             response_time_ms=response_time_ms,
             total_tokens_used=None,
             metadata=aggregated_metadata
@@ -460,17 +453,20 @@ def query_qa(
     if req.audit_session_id and source_document_ids:
         try:
             for doc_id in source_document_ids:
-                log_document_access(
-                    user_id=getattr(req, 'user_id', None),
-                    document_id=doc_id,
-                    access_type="reference",
+                create_audit_log(
+                    object_type="document",
+                    user_id=current_user.id,
+                    object_id=doc_id,
+                    action="reference",
+                    compliance_domain=compliance_domain,
                     audit_session_id=req.audit_session_id,
-                    query_text=req.question,
+                    risk_level="medium",
+                    details={"query_text": req.question, "answer": answer},
                     ip_address=ip_address,
                     user_agent=user_agent
                 )
         except Exception as e:
-            logging.warning(f"Failed to log document access: {e}")
+            logging.warning(f"Failed to log audit log: {e}")
     
     # Update audit session query count
     if req.audit_session_id and audit_session_data:
@@ -503,6 +499,7 @@ def query_qa(
 def query_stream(
     req: QueryRequest, 
     request: Request,
+    current_user: ValidatedUser = None
 ):
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
@@ -567,12 +564,15 @@ def query_stream(
         if req.audit_session_id and source_document_ids:
             try:
                 for doc_id in source_document_ids:
-                    log_document_access(
-                        user_id=getattr(req, 'user_id', None),
-                        document_id=doc_id,
-                        access_type="reference",
+                    create_audit_log(
+                        object_type="document",
+                        user_id=current_user.id,
+                        object_id=doc_id,
+                        action="reference",
+                        compliance_domain=compliance_domain,
                         audit_session_id=req.audit_session_id,
-                        query_text=req.question,
+                        risk_level="medium",
+                        details={"query_text": req.question},
                         ip_address=ip_address,
                         user_agent=user_agent
                     )
@@ -805,7 +805,7 @@ def get_all_pdf_ingestions(
 def get_pdf_ingestions_by_domains(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
-    current_user: ValidatedUser = None
+    current_user: ValidatedUser = None,
 ) -> List[Dict[str, Any]]:
     user_compliance_domains = getattr(current_user, 'compliance_domains', [])
     
@@ -814,6 +814,20 @@ def get_pdf_ingestions_by_domains(
             status_code=403, 
             detail="Access denied."
         )
+
+    create_audit_log(
+        object_type="document",
+        user_id=current_user.id,
+        object_id=current_user.id,
+        action="view",
+        compliance_domain=current_user.compliance_domains[0],
+        audit_session_id=None,
+        risk_level="high",
+        details={},
+        ip_address=None,
+        user_agent=None
+    )
+
     return list_pdf_ingestions_by_compliance_domains(
         compliance_domains=user_compliance_domains, skip=skip, limit=limit
     )
@@ -1003,8 +1017,22 @@ def get_user_audit_sessions(
     user_id: str = Path(..., description="User ID to filter sessions"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: ValidatedUser = None
 ) -> List[AuditSessionResponse]:
-    """Get audit sessions for a specific user."""
+
+    create_audit_log(
+        object_type="audit_session",
+        user_id=current_user.id,
+        object_id=current_user.id,
+        action="view",
+        compliance_domain=current_user.compliance_domains[0],
+        audit_session_id=None,
+        risk_level="high",
+        details={},
+        ip_address=None,
+        user_agent=None
+    )
+
     return get_audit_sessions_by_user(user_id=user_id, skip=skip, limit=limit)
 
 @router_v1.get("/audit-sessions/{session_id}",
@@ -1295,93 +1323,118 @@ def get_audit_session_statistics_endpoint(
         end_date=end_date
     )
 
-@router_v1.get("/document-access-logs",
-    summary="List all document access logs with pagination",
-    description="Fetches paginated rows from the Supabase 'document_access_log' table.",
+@router_v1.get("/audit-logs",
+    summary="List all audit logs with pagination",
+    description="Fetches audit logs.",
     response_model=List[Dict[str, Any]],
     tags=["Audit"],
 )
 @authorize(allowed_roles=["admin"], check_active=True)
-def get_all_document_access_logs(
+def get_all_audit_logs(
     skip: int = Query(0, ge=0), 
     limit: int = Query(10, ge=1, le=100),
 ) -> Any:
-    return list_document_access_logs(skip=skip, limit=limit)
+    return list_audit_logs(skip=skip, limit=limit)
 
-@router_v1.get("/document-access-logs/{log_id}",
-    summary="Get document access log by ID",
-    description="Fetches a specific document access log entry by its ID.",
+@router_v1.get("/audit-logs/{log_id}",
+    summary="Get audit log by ID",
+    description="Fetches a specific audit log entry by its ID.",
     response_model=Dict[str, Any],
     tags=["Audit"],
 )
 @authorize(allowed_roles=["admin"], check_active=True)
-def get_document_access_log(
+def get_audit_log(
     log_id: str,
 ) -> Any:
-    return get_document_access_log_by_id(log_id)
+    return get_audit_log_by_id(log_id)
 
-@router_v1.get("/document-access-logs/user/{user_id}",
-    summary="List document access logs by user ID",
-    description="Fetches paginated document access logs for a specific user.",
+@router_v1.get("/audit-logs/user/{user_id}",
+    summary="List audit logs by user ID",
+    description="Fetches paginated audit logs for a specific user.",
     response_model=List[Dict[str, Any]],
     tags=["Audit"],
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_document_access_logs_by_user(
+def get_audit_logs_by_user(
     user_id: str,
     skip: int = Query(0, ge=0), 
     limit: int = Query(10, ge=1, le=100),
 ) -> Any:
-    return list_document_access_logs_by_user(user_id, skip=skip, limit=limit)
+    return list_audit_logs_by_user(user_id, skip=skip, limit=limit)
 
-@router_v1.get("/document-access-logs/document/{document_id}",
-    summary="List document access logs by document ID",
-    description="Fetches paginated document access logs for a specific document.",
+@router_v1.get("/audit-logs/document/{document_id}",
+    summary="List audit logs by document ID",
+    description="Fetches paginated audit logs for a specific document.",
     response_model=List[Dict[str, Any]],
     tags=["Audit"],
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_document_access_logs_by_document(
-    document_id: str,
+def get_audit_logs_by_document(
+    object_type: str,
+    object_id: str,
     skip: int = Query(0, ge=0), 
     limit: int = Query(10, ge=1, le=100),
 ) -> Any:
-    return list_document_access_logs_by_document(document_id, skip=skip, limit=limit)
+    return list_audit_logs_by_object(object_type, object_id, skip=skip, limit=limit)
 
-@router_v1.get("/document-access-logs/audit-session/{audit_session_id}",
-    summary="List document access logs by audit session ID",
-    description="Fetches paginated document access logs for a specific audit session.",
+@router_v1.get("/audit-logs/audit-session/{audit_session_id}",
+    summary="List audit logs by audit session ID",
+    description="Fetches paginated audit logs for a specific audit session.",
     response_model=List[Dict[str, Any]],
     tags=["Audit"],
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_document_access_logs_by_audit_session(
+def get_audit_logs_by_audit_session(
     audit_session_id: str,
     skip: int = Query(0, ge=0), 
     limit: int = Query(10, ge=1, le=100),
 ) -> Any:
-    return list_document_access_logs_by_audit_session(audit_session_id, skip=skip, limit=limit)
+    return list_audit_logs_by_audit_session(audit_session_id, skip=skip, limit=limit)
 
-@router_v1.get("/document-access-logs/filter",
-    summary="List document access logs with multiple filters",
-    description="Fetches paginated document access logs filtered by user_id, document_id, access_type, and/or audit_session_id.",
+@router_v1.get("/audit-logs/compliance-domain/{compliance_domain_name}",
+    summary="List audit logs by compliance domain name",
+    description="Fetches paginated audit logs for a specific compliance domain.",
     response_model=List[Dict[str, Any]],
     tags=["Audit"],
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_filtered_document_access_logs(
+def get_audit_logs_by_compliance_domain(
+    compliance_domain: str,
+    skip: int = Query(0, ge=0), 
+    limit: int = Query(10, ge=1, le=100),
+) -> Any:
+    return list_audit_logs_by_compliance_domain(
+        compliance_domain=compliance_domain, 
+        skip=skip, 
+        limit=limit
+    )
+
+@router_v1.get("/audit-logs/filter",
+    summary="List audit logs with multiple filters",
+    description="Fetches paginated audit logs filtered by user_id, document_id, access_type, and/or audit_session_id.",
+    response_model=List[Dict[str, Any]],
+    tags=["Audit"],
+)
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
+def get_filtered_audit_logs(
+    object_type: Optional[str] = Query(None, description="Filter by object type"),
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
-    document_id: Optional[str] = Query(None, description="Filter by document ID"),
-    access_type: Optional[str] = Query(None, description="Filter by access type (view, search, download, reference)"),
+    object_id: Optional[str] = Query(None, description="Filter by object ID"),
+    action: Optional[str] = Query(None, description="Filter by action (view, search, download, reference)"),
     audit_session_id: Optional[str] = Query(None, description="Filter by audit session ID"),
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
+    risk_level: Optional[str] = Query(None, description="Filter by risk level"),
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100),
 ) -> Any:
-    return list_document_access_logs_filtered(
+    return list_audit_logs_filtered(
+        object_type=object_type,
         user_id=user_id,
-        document_id=document_id,
-        access_type=access_type,
+        object_id=object_id,
+        action=action,
         audit_session_id=audit_session_id,
+        compliance_domain=compliance_domain,
+        risk_level=risk_level,
         skip=skip,
         limit=limit
     )
@@ -1660,12 +1713,15 @@ def create_new_compliance_gap(
         if created_gap and current_user and "related_documents" in gap_data and gap_data["related_documents"]:
             try:
                 for doc_id in gap_data["related_documents"]:
-                    log_document_access(
+                    create_audit_log(
+                        object_type="document",
                         user_id=current_user.id,
-                        document_id=doc_id,
-                        access_type="reference",
+                        object_id=doc_id,
+                        action="reference",
+                        compliance_domain=gap_data.compliance_domain,
                         audit_session_id=gap_data.get("audit_session_id"),
-                        query_text=gap_data.get("original_question"),
+                        risk_level="high",
+                        details={"query_text": gap_data.get("original_question")},
                         ip_address=ip_address,
                         user_agent=user_agent
                     )
@@ -1764,6 +1820,7 @@ def review_compliance_gap(
 def create_compliance_recommendation(
     req: ComplianceRecommendationRequest,
     request: Request,
+    current_user: ValidatedUser = None
 ) -> ComplianceRecommendationResponse:
     
     start_time = time.time()
@@ -1808,6 +1865,19 @@ def create_compliance_recommendation(
         "original_question": req.chat_history_item.question,
         "source_document_count": len(req.chat_history_item.source_document_ids) if req.chat_history_item.source_document_ids else 0
     }
+
+    create_audit_log(
+        object_type="compliance_gap",
+        user_id=current_user.id,
+        object_id=req.chat_history_item.audit_session_id,
+        action="create",
+        compliance_domain=req.chat_history_item.compliance_domain,
+        audit_session_id=req.chat_history_item.audit_session_id,
+        risk_level="high",
+        details={"original_question": req.chat_history_item.question},
+        ip_address=ip_address,
+        user_agent=user_agent
+    )
     
     return ComplianceRecommendationResponse(
         recommendation_text=recommendation_text,
@@ -1830,7 +1900,20 @@ def get_domain_compliance_gaps(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
     status_filter: Optional[str] = Query(None, description="Filter by status"),
+    current_user: ValidatedUser = None
 ) -> List[Dict[str, Any]]:
+    create_audit_log(
+        object_type="compliance_gap",
+        user_id=current_user.id,
+        object_id=current_user.id,
+        action="view",
+        compliance_domain=current_user.compliance_domains[0],
+        audit_session_id=None,
+        risk_level="high",
+        details={},
+        ip_address=None,
+        user_agent=None
+    )
     return get_gaps_by_domain(domain_code, skip, limit, status_filter)
 
 @router_v1.get("/users/{user_id}/gaps",
@@ -1931,6 +2014,19 @@ def get_all_audit_reports(
             status_code=403, 
             detail="Access denied."
         )
+    create_audit_log(
+        object_type="audit_report",
+        user_id=current_user.id,
+        object_id=current_user.id,
+        action="view",
+        compliance_domain=current_user.compliance_domains[0],
+        audit_session_id=None,
+        risk_level="high",
+        details={},
+        ip_address=None,
+        user_agent=None
+    )
+
     return list_audit_reports_by_compliance_domains(user_compliance_domains)
 
 @router_v1.get("/audit-reports/compliance-domain/{compliance_domain_code}",
@@ -2244,6 +2340,7 @@ def get_audit_report_version_history_summary(
 def create_executive_summary(
     req: ExecutiveSummaryRequest,
     request: Request,
+    current_user: ValidatedUser = None
 ) -> ExecutiveSummaryResponse:
 
     start_time = time.time()
@@ -2313,6 +2410,19 @@ def create_executive_summary(
             if req.compliance_gaps else 0.0
         )
     }
+
+    create_audit_log(
+        object_type="audit_session",
+        user_id=current_user.id,
+        object_id=req.audit_report.audit_session_id,
+        action="create",
+        compliance_domain=req.audit_report.compliance_domain,
+        audit_session_id=req.audit_report.audit_session_id,
+        risk_level="high",
+        details={"audit report title": req.audit_report.report_title, "summary type": "executive summary"},
+        ip_address=ip_address,
+        user_agent=user_agent
+    )
     
     return ExecutiveSummaryResponse(
         executive_summary=executive_summary,
@@ -2337,6 +2447,7 @@ def create_executive_summary(
 def create_threat_intelligence_analysis(
     req: ThreatIntelligenceRequest,
     request: Request,
+    current_user: ValidatedUser = None
 ) -> ThreatIntelligenceResponse:
     
     start_time = time.time()
@@ -2404,6 +2515,19 @@ def create_threat_intelligence_analysis(
             if req.compliance_gaps else 0.0
         )
     }
+
+    create_audit_log(
+        object_type="audit_session",
+        user_id=current_user.id,
+        object_id=req.audit_report.audit_session_id,
+        action="create",
+        compliance_domain=req.audit_report.compliance_domain,
+        audit_session_id=req.audit_report.audit_session_id,
+        risk_level="high",
+        details={"audit report title": req.audit_report.report_title, "summary type": "threat intelligence analysis"},
+        ip_address=ip_address,
+        user_agent=user_agent
+    )
     
     return ThreatIntelligenceResponse(
         threat_analysis=threat_analysis,
@@ -2427,6 +2551,7 @@ def create_threat_intelligence_analysis(
 def create_control_risk_prioritization(
     req: ThreatIntelligenceRequest,
     request: Request,
+    current_user: ValidatedUser = None
 ) -> ControlRiskPrioritizationResponse:
     start_time = time.time()
     
@@ -2493,6 +2618,19 @@ def create_control_risk_prioritization(
         "iso27001_control_families_total": 14,
         "risk_prioritization_methodology": "High Risk + High Impact = Priority 1, Strategic combinations = Priority 2, Others = Priority 3"
     }
+
+    create_audit_log(
+        object_type="audit_session",
+        user_id=current_user.id,
+        object_id=req.audit_report.audit_session_id,
+        action="create",
+        compliance_domain=req.audit_report.compliance_domain,
+        audit_session_id=req.audit_report.audit_session_id,
+        risk_level="high",
+        details={"audit report title": req.audit_report.report_title, "summary type": "control risk prioritization"},
+        ip_address=ip_address,
+        user_agent=user_agent
+    )
     
     return ControlRiskPrioritizationResponse(
         risk_prioritization_analysis=risk_analysis,
@@ -2524,6 +2662,7 @@ def create_control_risk_prioritization(
 def create_target_audience_summary(
     req: ExecutiveSummaryRequest,
     request: Request,
+    current_user: ValidatedUser = None
 ) -> TargetAudienceSummaryResponse:
 
     start_time = time.time()
@@ -2608,6 +2747,19 @@ def create_target_audience_summary(
             if any(gap.false_positive_likelihood for gap in req.compliance_gaps) else 0.0
         )
     }
+
+    create_audit_log(
+        object_type="audit_session",
+        user_id=current_user.id,
+        object_id=req.audit_report.audit_session_id,
+        action="create",
+        compliance_domain=req.audit_report.compliance_domain,
+        audit_session_id=req.audit_report.audit_session_id,
+        risk_level="high",
+        details={"audit report title": req.audit_report.report_title, "summary type": "target audience summary"},
+        ip_address=ip_address,
+        user_agent=user_agent
+    )
     
     return TargetAudienceSummaryResponse(
         target_audience_summary=target_audience_summary,

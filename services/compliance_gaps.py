@@ -706,51 +706,6 @@ def get_compliance_gaps_statistics(
         logger.error("Failed to generate compliance gaps statistics", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
-def log_document_access(
-    user_id: Optional[str],
-    document_id: str,
-    access_type: str,
-    audit_session_id: Optional[str] = None,
-    query_text: Optional[str] = None,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None
-) -> None:
-    try:
-        access_data = {
-            "user_id": user_id,
-            "document_id": document_id,
-            "access_type": access_type,
-            "accessed_at": datetime.now(timezone.utc).isoformat(),
-            "audit_session_id": audit_session_id,
-            "query_text": query_text,
-            "ip_address": ip_address,
-            "user_agent": user_agent
-        }
-        
-        access_data = {k: v for k, v in access_data.items() if v is not None}
-        
-        resp = (
-            supabase
-            .table(settings.supabase_table_document_access_log)
-            .insert(access_data)
-            .execute()
-        )
-        
-        if hasattr(resp, "error") and resp.error:
-            logger.error("Failed to log document access", exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to log document access: {resp.error.message}"
-            )
-            
-        logger.debug(f"Logged access to document {document_id} by user {user_id}")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to log document access for document {document_id}", exc_info=True)
-        pass
-
 def get_document_by_id(document_id: str) -> Optional[Dict[str, Any]]:
     try:
         logger.info(f"Fetching document with ID: {document_id}")
