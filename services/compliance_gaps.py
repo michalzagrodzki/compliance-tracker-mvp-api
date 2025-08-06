@@ -74,6 +74,34 @@ def list_compliance_gaps(
         logger.error("Failed to fetch compliance gaps", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
+def list_compliance_gaps_by_compliance_domains(
+    compliance_domains: List[str], 
+    skip: int = 0, 
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    try:
+        logger.info(f"Fetching gaps for domains: {compliance_domains}")
+        
+        query = (
+            supabase
+            .table(settings.supabase_table_compliance_gaps)
+            .select("*")
+            .in_("compliance_domain", compliance_domains)
+            .order("risk_level", desc=True)
+            .order("detected_at", desc=True)
+            .limit(limit)
+            .offset(skip)
+        )
+        
+        resp = query.execute()
+        
+        logger.info(f"Found {len(resp.data)} gaps for domains {compliance_domains}")
+        return resp.data
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch gaps for domains {compliance_domains}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    
 def get_compliance_gap_by_id(gap_id: str) -> Dict[str, Any]:
     try:
         logger.info(f"Fetching compliance gap with ID: {gap_id}")
@@ -417,7 +445,6 @@ def update_compliance_gap(gap_id: str, update_data: Dict[str, Any]) -> Dict[str,
     except Exception as e:
         logger.error(f"Failed to update compliance gap {gap_id}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
 
 def update_gap_status(gap_id: str, new_status: str, resolution_notes: Optional[str] = None) -> Dict[str, Any]:
     try:

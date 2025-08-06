@@ -11,7 +11,7 @@ from services.authentication import AuthenticatedUser, RefreshTokenRequest, Toke
 from services.chat_history import get_audit_session_history, get_chat_history, get_chat_history_item, get_domain_history, get_user_history, insert_chat_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.compliance_gap_recommendation import generate_compliance_recommendation
-from services.compliance_gaps import assign_gap_to_user, create_compliance_gap, get_chat_history_by_id, get_compliance_gap_by_id, get_compliance_gaps_statistics, get_document_by_id, get_gaps_by_audit_session, get_gaps_by_domain, get_gaps_by_user, list_compliance_gaps, log_document_access, mark_gap_reviewed, update_compliance_gap, update_gap_status
+from services.compliance_gaps import assign_gap_to_user, create_compliance_gap, get_chat_history_by_id, get_compliance_gap_by_id, get_compliance_gaps_statistics, get_document_by_id, get_gaps_by_audit_session, get_gaps_by_domain, get_gaps_by_user, list_compliance_gaps, list_compliance_gaps_by_compliance_domains, log_document_access, mark_gap_reviewed, update_compliance_gap, update_gap_status
 from services.control_risk_prioritization import ControlRiskPrioritizationResponse, calculate_risk_prioritization_metrics, generate_control_risk_prioritization
 from services.db_check import check_database_connection
 from services.document import (
@@ -57,7 +57,7 @@ from services.schemas import (
     AuditSessionSearchRequest
 )
 from services.history import get_history
-from services.ingestion import delete_pdf_ingestion, get_pdf_ingestion_by_id, get_pdf_ingestions_by_compliance_domain, get_pdf_ingestions_by_user, get_pdf_ingestions_by_version, ingest_pdf_sync, list_pdf_ingestions, search_pdf_ingestions
+from services.ingestion import delete_pdf_ingestion, get_pdf_ingestion_by_id, get_pdf_ingestions_by_compliance_domain, get_pdf_ingestions_by_user, get_pdf_ingestions_by_version, ingest_pdf_sync, list_pdf_ingestions, list_pdf_ingestions_by_compliance_domains, search_pdf_ingestions
 from services.qa import answer_question
 from typing import Any, List, Dict, Optional, Union
 import logging
@@ -790,6 +790,29 @@ def get_all_pdf_ingestions(
 ) -> List[Dict[str, Any]]:
     return list_pdf_ingestions(skip=skip, limit=limit)
 
+@router_v1.get("/ingestions/compliance-domains",
+    summary="Get PDF ingestions by compliance domains linked to user",
+    description="Get all PDF ingestions by compliance domain linked to user",
+    response_model=List[Dict[str, Any]],
+    tags=["Ingestion"],
+)
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
+def get_pdf_ingestions_by_domains(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: ValidatedUser = None
+) -> List[Dict[str, Any]]:
+    user_compliance_domains = getattr(current_user, 'compliance_domains', [])
+    
+    if not user_compliance_domains:
+        raise HTTPException(
+            status_code=403, 
+            detail="Access denied."
+        )
+    return list_pdf_ingestions_by_compliance_domains(
+        compliance_domains=user_compliance_domains, skip=skip, limit=limit
+    )
+
 @router_v1.get("/ingestions/{ingestion_id}",
     summary="Get PDF ingestion by ID",
     description="Get detailed information about a specific PDF ingestion record",
@@ -934,7 +957,8 @@ def get_tag_constants_endpoint(
 def get_compliance_domains(
     skip: Optional[int] = Query(0, ge=0, description="Number of domains to skip for pagination"),
     limit: Optional[int] = Query(10, ge=1, le=100, description="Maximum number of domains to return"),
-    is_active: Optional[bool] = Query(None, description="Filter by active status. If None, returns all domains")
+    is_active: Optional[bool] = Query(None, description="Filter by active status. If None, returns all domains"),
+    current_user: ValidatedUser = None
 ) -> List[ComplianceDomain]:
     return list_compliance_domains(skip=skip or 0, limit=limit or 10, is_active=is_active)
 
@@ -972,7 +996,8 @@ def get_all_audit_sessions(
 def get_user_audit_sessions(
     user_id: str = Path(..., description="User ID to filter sessions"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return")
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: ValidatedUser = None
 ) -> List[AuditSessionResponse]:
     """Get audit sessions for a specific user."""
     return get_audit_sessions_by_user(user_id=user_id, skip=skip, limit=limit)
@@ -1482,6 +1507,27 @@ def get_all_compliance_gaps(
         detection_method=detection_method,
         regulatory_requirement=regulatory_requirement
     )
+
+@router_v1.get("/compliance-gaps/compliance-domains",
+    summary="List compliance gaps by compliance domains linked to user",
+    description="List all compliance gaps by compliance domains linked to user",
+    response_model=List[Dict[str, Any]],
+    tags=["Compliance Gaps"],
+)
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
+def get_compliance_gaps_by_compliance_domains(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: ValidatedUser = None
+) -> List[Dict[str, Any]]:
+    user_compliance_domains = getattr(current_user, 'compliance_domains', [])
+    
+    if not user_compliance_domains:
+        raise HTTPException(
+            status_code=403, 
+            detail="Access denied."
+        )
+    return list_compliance_gaps_by_compliance_domains(user_compliance_domains, skip, limit)
 
 @router_v1.get("/compliance-gaps/{gap_id}",
     summary="Get compliance gap by ID",

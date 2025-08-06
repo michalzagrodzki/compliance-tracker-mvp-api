@@ -186,6 +186,29 @@ def list_pdf_ingestions(skip: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
         logger.error("Failed to fetch PDF ingestions", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
+def list_pdf_ingestions_by_compliance_domains(
+    compliance_domains: List[str], 
+    skip: int = 0, 
+    limit: int = 10
+) -> List[Dict[str, Any]]:
+    try:
+        logger.info(f"Fetching PDF ingestions for domains {compliance_domains}: skip={skip}, limit={limit}")
+        resp = (
+            supabase
+            .table(settings.supabase_table_pdf_ingestion)
+            .select("*")
+            .in_("compliance_domain", compliance_domains)
+            .order("ingested_at", desc=True)
+            .limit(limit)
+            .offset(skip)
+            .execute()
+        )
+        logger.info(f"Received {len(resp.data)} PDF ingestions for domain {compliance_domains}")
+        return resp.data
+    except Exception as e:
+        logger.error(f"Failed to fetch PDF ingestions for domain {compliance_domains}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    
 def get_pdf_ingestions_by_compliance_domain(
     compliance_domain: str, 
     skip: int = 0, 
