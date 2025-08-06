@@ -12,7 +12,6 @@ class Settings(BaseSettings):
     supabase_table_compliance_domains: str = Field("compliance_domains", env="SUPABASE_TABLE_COMPLIANCE_DOMAINS")
     supabase_table_compliance_gaps: str = Field("compliance_gaps", env="SUPABASE_TABLE_COMPLIANCE_GAPS")
     supabase_table_audit_sessions: str = Field("audit_sessions", env="SUPABASE_TABLE_AUDIT_SESSIONS")
-    supabase_table_document_access_log: str = Field("document_access_log", env="SUPABASE_TABLE_DOCUMENT_ACCESS_LOG")
     supabase_table_users: str = Field("users", env="SUPABASE_TABLE_USERS")
     supabase_table_audit_reports: str = Field("audit_reports", env="SUPABASE_TABLE_AUDIT_REPORTS")
     supabase_table_audit_report_versions: str = Field("audit_report_versions", env="SUPABASE_TABLE_AUDIT_REPORT_VERSIONS")
