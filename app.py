@@ -238,7 +238,7 @@ def get_all_documents(
     tags_match_mode: str = Query("any", description="Tag matching mode: 'any', 'all', or 'exact'"),
     approval_status: Optional[str] = Query(None, description="Filter by approval status"),
     uploaded_by: Optional[str] = Query(None, description="Filter by uploader user ID"),
-    approved_by: Optional[str] = Query(None, description="Filter by approver user ID")
+    approved_by: Optional[str] = Query(None, description="Filter by approver user ID"),
 ) -> Any:
     return list_documents(
         skip=skip, 
@@ -262,7 +262,6 @@ def get_all_documents(
 @authorize(allowed_roles=["admin"], check_active=True)
 def get_documents_by_tags_endpoint(
     request: DocumentTagsRequest,
-    current_user: ValidatedUser = None
 ) -> List[Dict[str, Any]]:
     return get_documents_by_tags(
         tags=request.document_tags,
@@ -279,9 +278,10 @@ def get_documents_by_tags_endpoint(
     tags=["Documents"],
 )
 @authorize(allowed_roles=["admin"], check_active=True)
-def get_documents_by_source(source_filename: str) -> Any:
+def get_documents_by_source(
+    source_filename: str,
+) -> Any:
     return get_documents_by_source_filename(source_filename)
-
 
 @router_v1.get("/documents/by-domain/{compliance_domain}",
     summary="Get documents by compliance domain",
@@ -293,7 +293,7 @@ def get_documents_by_source(source_filename: str) -> Any:
 def get_documents_by_domain(
     compliance_domain: str,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return")
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
 ) -> Any:
     return get_documents_by_compliance_domain(compliance_domain, skip, limit)
 
@@ -307,7 +307,7 @@ def get_documents_by_domain(
 def get_documents_by_version(
     document_version: str,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return")
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
 ) -> Any:
     return get_documents_by_version(document_version, skip, limit)
 
@@ -344,7 +344,7 @@ def get_documents_by_domain_version(
     compliance_domain: str,
     document_version: str,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return")
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
 ) -> Any:
     return get_documents_by_domain_and_version(compliance_domain, document_version, skip, limit)
 
@@ -356,7 +356,6 @@ def get_documents_by_domain_version(
 )
 @authorize(allowed_roles=["admin", "compliance_officer", "reader"], check_active=True)
 def get_tag_constants_endpoint(
-    current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
     return {
         "tag_categories": DocumentTagConstants.get_tags_by_category(),
@@ -391,7 +390,10 @@ def get_tag_constants_endpoint(
     tags=["RAG"],
 )
 @authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
-def query_qa(req: QueryRequest, request: Request) -> QueryResponse:
+def query_qa(
+    req: QueryRequest, 
+    request: Request,
+) -> QueryResponse:
     validated_req = validate_and_secure_query_request(req, request)
     start_time = time.time()
     
@@ -498,7 +500,10 @@ def query_qa(req: QueryRequest, request: Request) -> QueryResponse:
     tags=["RAG"],
 )
 @authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
-def query_stream(req: QueryRequest, request: Request):
+def query_stream(
+    req: QueryRequest, 
+    request: Request,
+):
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
     
@@ -603,7 +608,7 @@ def query_stream(req: QueryRequest, request: Request):
 )
 @authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 def read_history_item(
-    item_id: int
+    item_id: int,
 ):
     return get_chat_history_item(item_id)
 
@@ -619,7 +624,7 @@ def read_history(
     audit_session_id: Optional[str] = Query(None, description="Filter by audit session UUID"),
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain code"),
     user_id: Optional[str] = Query(None, description="Filter by user UUID"),
-    limit: Optional[int] = Query(None, ge=1, le=1000, description="Limit number of records")
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Limit number of records"),
 ):
     return get_chat_history(
         conversation_id=conversation_id,
@@ -638,7 +643,7 @@ def read_history(
 @authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 def read_audit_session_history(
     audit_session_id: str,
-    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain")
+    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
 ):
     return get_audit_session_history(
         audit_session_id=audit_session_id,
@@ -657,7 +662,7 @@ def read_domain_history(
     audit_session_id: Optional[str] = Query(None, description="Filter by audit session"),
     user_id: Optional[str] = Query(None, description="Filter by user"),
     limit: Optional[int] = Query(100, ge=1, le=1000, description="Limit number of records"),
-    skip: Optional[int] = Query(0, ge=0, description="Skip number of records for pagination")
+    skip: Optional[int] = Query(0, ge=0, description="Skip number of records for pagination"),
 ):
     return get_domain_history(
         domain_code=domain_code,
@@ -679,7 +684,7 @@ def read_user_history(
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
     audit_session_id: Optional[str] = Query(None, description="Filter by audit session"),
     limit: Optional[int] = Query(100, ge=1, le=1000, description="Limit number of records"),
-    skip: Optional[int] = Query(0, ge=0, description="Skip number of records for pagination")
+    skip: Optional[int] = Query(0, ge=0, description="Skip number of records for pagination"),
 ):
     return get_user_history(
         user_id=user_id,
@@ -958,7 +963,6 @@ def get_compliance_domains(
     skip: Optional[int] = Query(0, ge=0, description="Number of domains to skip for pagination"),
     limit: Optional[int] = Query(10, ge=1, le=100, description="Maximum number of domains to return"),
     is_active: Optional[bool] = Query(None, description="Filter by active status. If None, returns all domains"),
-    current_user: ValidatedUser = None
 ) -> List[ComplianceDomain]:
     return list_compliance_domains(skip=skip or 0, limit=limit or 10, is_active=is_active)
 
@@ -969,7 +973,9 @@ def get_compliance_domains(
     tags=["Compliance"],
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_compliance_domain(code: str) -> ComplianceDomain:
+def get_compliance_domain(
+    code: str,
+) -> ComplianceDomain:
     return get_compliance_domain_by_code(code)
 
 @router_v1.get("/audit-sessions",
@@ -981,7 +987,7 @@ def get_compliance_domain(code: str) -> ComplianceDomain:
 @authorize(allowed_roles=["admin"], check_active=True)
 def get_all_audit_sessions(
     skip: int = Query(0, ge=0, description="Number of records to skip"), 
-    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return")
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
 ) -> List[AuditSessionResponse]:
     """Get all audit sessions with pagination."""
     return list_audit_sessions(skip=skip, limit=limit)
@@ -997,7 +1003,6 @@ def get_user_audit_sessions(
     user_id: str = Path(..., description="User ID to filter sessions"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
-    current_user: ValidatedUser = None
 ) -> List[AuditSessionResponse]:
     """Get audit sessions for a specific user."""
     return get_audit_sessions_by_user(user_id=user_id, skip=skip, limit=limit)
@@ -1010,7 +1015,7 @@ def get_user_audit_sessions(
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_session(
-    session_id: str = Path(..., description="Audit session ID")
+    session_id: str = Path(..., description="Audit session ID"),
 ) -> AuditSessionResponse:
     """Get a single audit session by ID."""
     return get_audit_session_by_id(session_id=session_id)
@@ -1025,7 +1030,7 @@ def get_audit_session(
 def get_audit_sessions_by_status(
     is_active: bool = Path(..., description="Active status filter (true/false)"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return")
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
 ) -> List[AuditSessionResponse]:
     """Get audit sessions by active status."""
     return get_audit_sessions_by_active_status(
@@ -1042,7 +1047,7 @@ def get_audit_sessions_by_status(
 def get_audit_sessions_by_compliance_domain(
     compliance_domain: str = Path(..., description="Compliance domain (e.g. ISO27001)"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return")
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
 ) -> List[AuditSessionResponse]:
     return get_audit_sessions_by_domain(
         compliance_domain=compliance_domain, skip=skip, limit=limit
@@ -1056,7 +1061,7 @@ def get_audit_sessions_by_compliance_domain(
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def search_audit_sessions_endpoint(
-    search_request: AuditSessionSearchRequest
+    search_request: AuditSessionSearchRequest,
 ) -> List[AuditSessionResponse]:
     return search_audit_sessions(
         compliance_domain=search_request.compliance_domain,
@@ -1103,7 +1108,7 @@ def create_new_audit_session(
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def update_existing_audit_session(
     session_id: str = Path(..., description="Audit session ID to update"),
-    update_data: AuditSessionUpdate = Body(..., description="Fields to update")
+    update_data: AuditSessionUpdate = Body(..., description="Fields to update"),
 ) -> AuditSessionResponse:
     return update_audit_session(
         session_id=session_id,
@@ -1122,7 +1127,7 @@ def update_existing_audit_session(
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def close_audit_session(
     session_id: str = Path(..., description="Audit session ID to close"),
-    session_summary: Optional[str] = Body(None, description="Optional summary of the session", embed=True)
+    session_summary: Optional[str] = Body(None, description="Optional summary of the session", embed=True),
 ) -> AuditSessionResponse:
     return update_audit_session(
         session_id=session_id,
@@ -1139,7 +1144,7 @@ def close_audit_session(
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def activate_audit_session(
-    session_id: str = Path(..., description="Audit session ID to reactivate")
+    session_id: str = Path(..., description="Audit session ID to reactivate"),
 ) -> AuditSessionResponse:
     return update_audit_session(
         session_id=session_id,
@@ -1156,7 +1161,7 @@ def activate_audit_session(
 @authorize(allowed_roles=["admin"], check_active=True)
 def delete_audit_session_endpoint(
     session_id: str = Path(..., description="Audit session ID to delete"),
-    hard_delete: bool = Query(False, description="If true, permanently delete the session (not recommended for compliance)")
+    hard_delete: bool = Query(False, description="If true, permanently delete the session (not recommended for compliance)"),
 ) -> Dict[str, Any]:
 
     return delete_audit_session(
@@ -1281,7 +1286,7 @@ def get_audit_session_statistics_endpoint(
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
     start_date: Optional[datetime] = Query(None, description="Filter sessions started after this date"),
-    end_date: Optional[datetime] = Query(None, description="Filter sessions started before this date")
+    end_date: Optional[datetime] = Query(None, description="Filter sessions started before this date"),
 ) -> Dict[str, Any]:
     return get_audit_session_statistics(
         compliance_domain=compliance_domain,
@@ -1299,7 +1304,7 @@ def get_audit_session_statistics_endpoint(
 @authorize(allowed_roles=["admin"], check_active=True)
 def get_all_document_access_logs(
     skip: int = Query(0, ge=0), 
-    limit: int = Query(10, ge=1, le=100)
+    limit: int = Query(10, ge=1, le=100),
 ) -> Any:
     return list_document_access_logs(skip=skip, limit=limit)
 
@@ -1310,7 +1315,9 @@ def get_all_document_access_logs(
     tags=["Audit"],
 )
 @authorize(allowed_roles=["admin"], check_active=True)
-def get_document_access_log(log_id: str) -> Any:
+def get_document_access_log(
+    log_id: str,
+) -> Any:
     return get_document_access_log_by_id(log_id)
 
 @router_v1.get("/document-access-logs/user/{user_id}",
@@ -1323,7 +1330,7 @@ def get_document_access_log(log_id: str) -> Any:
 def get_document_access_logs_by_user(
     user_id: str,
     skip: int = Query(0, ge=0), 
-    limit: int = Query(10, ge=1, le=100)
+    limit: int = Query(10, ge=1, le=100),
 ) -> Any:
     return list_document_access_logs_by_user(user_id, skip=skip, limit=limit)
 
@@ -1337,7 +1344,7 @@ def get_document_access_logs_by_user(
 def get_document_access_logs_by_document(
     document_id: str,
     skip: int = Query(0, ge=0), 
-    limit: int = Query(10, ge=1, le=100)
+    limit: int = Query(10, ge=1, le=100),
 ) -> Any:
     return list_document_access_logs_by_document(document_id, skip=skip, limit=limit)
 
@@ -1351,7 +1358,7 @@ def get_document_access_logs_by_document(
 def get_document_access_logs_by_audit_session(
     audit_session_id: str,
     skip: int = Query(0, ge=0), 
-    limit: int = Query(10, ge=1, le=100)
+    limit: int = Query(10, ge=1, le=100),
 ) -> Any:
     return list_document_access_logs_by_audit_session(audit_session_id, skip=skip, limit=limit)
 
@@ -1368,7 +1375,7 @@ def get_filtered_document_access_logs(
     access_type: Optional[str] = Query(None, description="Filter by access type (view, search, download, reference)"),
     audit_session_id: Optional[str] = Query(None, description="Filter by audit session ID"),
     skip: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1, le=100)
+    limit: int = Query(10, ge=1, le=100),
 ) -> Any:
     return list_document_access_logs_filtered(
         user_id=user_id,

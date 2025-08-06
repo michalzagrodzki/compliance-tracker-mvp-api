@@ -1,3 +1,5 @@
+from functools import wraps
+import inspect
 import logging
 from typing import Optional, List, Dict, Any
 from fastapi import Depends, HTTPException
@@ -96,4 +98,22 @@ def authorize(
                 raise HTTPException(status_code=500, detail="Authorization failed")
         
         return auth_dependency
-    return depends(current_user=Depends(create_dependency()))
+    def decorator(func):
+        sig = inspect.signature(func)
+        expects_current_user = 'current_user' in sig.parameters
+        
+        if expects_current_user:
+            return depends(current_user=Depends(create_dependency()))(func)
+        else:
+            dependency = Depends(create_dependency())
+            
+            @wraps(func)
+            async def wrapper(*args, validated_user: ValidatedUser = dependency, **kwargs):    
+                return await func(*args, **kwargs) if inspect.iscoroutinefunction(func) else func(*args, **kwargs)
+            
+            new_params = [p for name, p in sig.parameters.items()]
+            wrapper.__signature__ = sig.replace(parameters=new_params)
+            
+            return wrapper
+    
+    return decorator
