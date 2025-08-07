@@ -3,9 +3,18 @@ from typing import List, Dict, Any, Optional
 from fastapi import HTTPException
 from db.supabase_client import create_supabase_client
 from config.config import settings
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 supabase = create_supabase_client()
+
+def _ensure_string(value: Any) -> Optional[str]:
+    """Convert UUID objects to strings, pass through None and strings as-is"""
+    if value is None:
+        return None
+    if isinstance(value, UUID):
+        return str(value)
+    return str(value)
 
 def create_audit_log(
     object_type: str,
@@ -23,11 +32,12 @@ def create_audit_log(
     try:
         logger.info(f"Creating audit log: {object_type}/{object_id} - {action} by {user_id}")
         
+        # Ensure UUID fields are converted to strings
         audit_data = {
             "object_type": object_type,
-            "object_id": object_id,
+            "object_id": _ensure_string(object_id),
             "action": action,
-            "user_id": user_id,
+            "user_id": _ensure_string(user_id),
             "compliance_domain": compliance_domain,
             "ip_address": ip_address,
             "user_agent": user_agent,
@@ -37,7 +47,7 @@ def create_audit_log(
         }
         
         if audit_session_id:
-            audit_data["audit_session_id"] = audit_session_id
+            audit_data["audit_session_id"] = _ensure_string(audit_session_id)
         
         resp = (
             supabase
@@ -82,7 +92,7 @@ def get_audit_log_by_id(log_id: str) -> Dict[str, Any]:
             supabase
             .table(settings.supabase_table_audit_log)
             .select("id, object_type, object_id, action, user_id, audit_session_id, compliance_domain, performed_at, ip_address, user_agent, details, risk_level, tags")
-            .eq("id", log_id)
+            .eq("id", _ensure_string(log_id))
             .execute()
         )
         
@@ -104,7 +114,7 @@ def list_audit_logs_by_user(user_id: str, skip: int = 0, limit: int = 10) -> Lis
             supabase
             .table(settings.supabase_table_audit_log)
             .select("id, object_type, object_id, action, user_id, audit_session_id, compliance_domain, performed_at, ip_address, user_agent, details, risk_level, tags")
-            .eq("user_id", user_id)
+            .eq("user_id", _ensure_string(user_id))
             .order("performed_at", desc=True)
             .limit(limit)
             .offset(skip)
@@ -124,7 +134,7 @@ def list_audit_logs_by_object(object_type: str, object_id: str, skip: int = 0, l
             .table(settings.supabase_table_audit_log)
             .select("id, object_type, object_id, action, user_id, audit_session_id, compliance_domain, performed_at, ip_address, user_agent, details, risk_level, tags")
             .eq("object_type", object_type)
-            .eq("object_id", object_id)
+            .eq("object_id", _ensure_string(object_id))
             .order("performed_at", desc=True)
             .limit(limit)
             .offset(skip)
@@ -143,7 +153,7 @@ def list_audit_logs_by_audit_session(audit_session_id: str, skip: int = 0, limit
             supabase
             .table(settings.supabase_table_audit_log)
             .select("id, object_type, object_id, action, user_id, audit_session_id, compliance_domain, performed_at, ip_address, user_agent, details, risk_level, tags")
-            .eq("audit_session_id", audit_session_id)
+            .eq("audit_session_id", _ensure_string(audit_session_id))
             .order("performed_at", desc=True)
             .limit(limit)
             .offset(skip)
@@ -197,13 +207,13 @@ def list_audit_logs_filtered(
         if object_type:
             query = query.eq("object_type", object_type)
         if object_id:
-            query = query.eq("object_id", object_id)
+            query = query.eq("object_id", _ensure_string(object_id))
         if user_id:
-            query = query.eq("user_id", user_id)
+            query = query.eq("user_id", _ensure_string(user_id))
         if action:
             query = query.eq("action", action)
         if audit_session_id:
-            query = query.eq("audit_session_id", audit_session_id)
+            query = query.eq("audit_session_id", _ensure_string(audit_session_id))
         if compliance_domain:
             query = query.eq("compliance_domain", compliance_domain)
         if risk_level:
