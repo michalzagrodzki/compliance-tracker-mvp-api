@@ -116,10 +116,6 @@ tags_metadata = [
         "description": "Audit trail and access logging.",
     },
     {
-        "name": "Summary",
-        "description": "Context summary of structured data.",
-    },
-    {
         "name": "ISO Controls",
         "description": "ISO Control Management.",
     },
