@@ -72,8 +72,20 @@ tags_metadata = [
         "description": "User authentication and authorization endpoints.",
     },
     {
-        "name": "Health",
-        "description": "Health-check and diagnostics endpoints.",
+        "name": "Audit Sessions",
+        "description": "Audit session management and tracking operations.",
+    },
+    {
+        "name": "Audit Reports",
+        "description": "Audit trail and access logging.",
+    },
+    {
+        "name": "Compliance Gaps",
+        "description": "Compliance gaps operations.",
+    },
+    {
+        "name": "Ingestion",
+        "description": "PDF ingestion and embedding endpoints.",        
     },
     {
         "name": "Documents",
@@ -88,35 +100,23 @@ tags_metadata = [
         "description": "Chat history operations.",
     },
     {
-        "name": "Ingestion",
-        "description": "PDF ingestion and embedding endpoints.",        
-    },
-    {
-        "name": "Audit",
-        "description": "Document access logging and audit trail operations.",
-    },
-    {
-        "name": "Audit Sessions",
-        "description": "Audit session management and tracking operations.",
-    },
-    {
         "name": "Compliance",
         "description": "Compliance domain management operations.",
     },
     {
-        "name": "Compliance Gaps",
-        "description": "Compliance gaps operations.",
-    },
-    {
-        "name": "Users",
-        "description": "User-related operations and history.",
-    },
-    {
-        "name": "Audit",
-        "description": "Audit trail and access logging.",
+        "name": "Audit Logs",
+        "description": "Document access logging and audit trail operations.",
     },
     {
         "name": "ISO Controls",
         "description": "ISO Control Management.",
+    },
+    {
+        "name": "Health",
+        "description": "Health-check and diagnostics endpoints.",
+    },
+    {
+        "name": "Users",
+        "description": "User-related operations and history.",
     },
 ]

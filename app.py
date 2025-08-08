@@ -641,7 +641,7 @@ def read_history(
     response_model=List[ChatHistoryItem],
     summary="Get all chat history for an audit session",
     description="Returns all chat interactions within a specific audit session across conversations",
-    tags=["History", "Audit"],
+    tags=["History"],
 )
 @authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 def read_audit_session_history(
@@ -1331,7 +1331,7 @@ def get_audit_session_statistics_endpoint(
     summary="List all audit logs with pagination",
     description="Fetches audit logs.",
     response_model=List[Dict[str, Any]],
-    tags=["Audit"],
+    tags=["Audit Logs"],
 )
 @authorize(allowed_roles=["admin"], check_active=True)
 def get_all_audit_logs(
@@ -1344,7 +1344,7 @@ def get_all_audit_logs(
     summary="Get audit log by ID",
     description="Fetches a specific audit log entry by its ID.",
     response_model=Dict[str, Any],
-    tags=["Audit"],
+    tags=["Audit Logs"],
 )
 @authorize(allowed_roles=["admin"], check_active=True)
 def get_audit_log(
@@ -1356,7 +1356,7 @@ def get_audit_log(
     summary="List audit logs by user ID",
     description="Fetches paginated audit logs for a specific user.",
     response_model=List[Dict[str, Any]],
-    tags=["Audit"],
+    tags=["Audit Logs"],
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_logs_by_user(
@@ -1370,7 +1370,7 @@ def get_audit_logs_by_user(
     summary="List audit logs by document ID",
     description="Fetches paginated audit logs for a specific document.",
     response_model=List[Dict[str, Any]],
-    tags=["Audit"],
+    tags=["Audit Logs"],
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_logs_by_document(
@@ -1385,7 +1385,7 @@ def get_audit_logs_by_document(
     summary="List audit logs by audit session ID",
     description="Fetches paginated audit logs for a specific audit session.",
     response_model=List[Dict[str, Any]],
-    tags=["Audit"],
+    tags=["Audit Logs"],
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_logs_by_audit_session(
@@ -1399,7 +1399,7 @@ def get_audit_logs_by_audit_session(
     summary="List audit logs by compliance domain name",
     description="Fetches paginated audit logs for a specific compliance domain.",
     response_model=List[Dict[str, Any]],
-    tags=["Audit"],
+    tags=["Audit Logs"],
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_audit_logs_by_compliance_domain(
@@ -1417,7 +1417,7 @@ def get_audit_logs_by_compliance_domain(
     summary="List audit logs with multiple filters",
     description="Fetches paginated audit logs filtered by user_id, document_id, access_type, and/or audit_session_id.",
     response_model=List[Dict[str, Any]],
-    tags=["Audit"],
+    tags=["Audit Logs"],
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_filtered_audit_logs(
