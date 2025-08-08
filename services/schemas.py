@@ -1731,6 +1731,106 @@ class TargetAudienceSummaryResponse(BaseModel):
         description="Metadata about the target audience summary generation process"
     )
 
+class CreateISOControlRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=50, description="ISO control name (max 50 characters)")
+    controls: Dict[str, Any] = Field(default_factory=dict, description="Control definitions as JSON object")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "name": "ISO 27001",
+                "controls": {
+                    "A.5.1.1": {
+                        "title": "Information security policies",
+                        "description": "A set of information security policies shall be defined, approved by management, published and communicated to employees and relevant external parties.",
+                        "control_type": "Policy",
+                        "implementation_status": "implemented"
+                    },
+                    "A.5.1.2": {
+                        "title": "Review of the information security policies",
+                        "description": "The information security policies shall be reviewed at planned intervals or if significant changes occur to ensure their continuing suitability, adequacy and effectiveness.",
+                        "control_type": "Policy",
+                        "implementation_status": "planned"
+                    }
+                }
+            }
+        }
+
+class UpdateISOControlRequest(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=50, description="ISO control name (max 50 characters)")
+    controls: Optional[Dict[str, Any]] = Field(None, description="Control definitions as JSON object")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "name": "ISO 27001:2022",
+                "controls": {
+                    "A.5.1.1": {
+                        "title": "Information security policies",
+                        "description": "Updated description for the latest standard",
+                        "control_type": "Policy",
+                        "implementation_status": "implemented",
+                        "last_reviewed": "2024-01-15"
+                    }
+                }
+            }
+        }
+
+class ISOControlResponse(BaseModel):
+    id: UUID = Field(..., description="Unique identifier for the ISO control")
+    name: str = Field(..., description="ISO control name")
+    controls: Dict[str, Any] = Field(..., description="Control definitions as JSON object")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "id": "123e4567-e89b-12d3-a456-426614174000",
+                "name": "ISO 27001",
+                "controls": {
+                    "A.5.1.1": {
+                        "title": "Information security policies",
+                        "description": "A set of information security policies shall be defined...",
+                        "control_type": "Policy",
+                        "implementation_status": "implemented"
+                    }
+                },
+                "created_at": "2024-01-15T10:30:00Z",
+                "updated_at": "2024-01-15T10:30:00Z"
+            }
+        }
+
+class ISOControlStatsResponse(BaseModel):
+    total_iso_standards: int = Field(..., description="Total number of ISO standards in the system")
+    standards_with_controls: int = Field(..., description="Number of standards that have control definitions")
+    empty_standards: int = Field(..., description="Number of standards without control definitions")
+    total_control_items: int = Field(..., description="Total number of individual control items across all standards")
+    avg_controls_per_standard: float = Field(..., description="Average number of controls per standard")
+    completion_rate_percent: float = Field(..., description="Percentage of standards that have controls defined")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "total_iso_standards": 12,
+                "standards_with_controls": 10,
+                "empty_standards": 2,
+                "total_control_items": 342,
+                "avg_controls_per_standard": 28.5,
+                "completion_rate_percent": 83.33
+            }
+        }
+
+class DeleteISOControlResponse(BaseModel):
+    message: str = Field(..., description="Confirmation message")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "message": "ISO control 'ISO 27001' deleted successfully"
+            }
+        }
+
 class DocumentTagConstants:    
     DOCUMENT_TYPES = {
         "reference_document": "ISO norms, GDPR regulations, standards",
