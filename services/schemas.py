@@ -261,6 +261,7 @@ class ComplianceGapCreate(ComplianceGapBase):
     ip_address: Optional[str] = Field(None, description="Client IP address")
     user_agent: Optional[str] = Field(None, description="User agent string")
     session_context: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional context")
+    iso_control: Optional[str] = Field(None, description="Control element from ISO")
     
     @validator('risk_level', 'business_impact')
     def validate_risk_levels(cls, v):
@@ -303,6 +304,7 @@ class ComplianceGap(ComplianceGapBase):
     detection_method: str = "query_analysis"
     confidence_score: Optional[Decimal] = 0.80
     false_positive_likelihood: Optional[Decimal] = 0.20
+    iso_control: Optional[str] = None
     class Config:
         use_enum_values = True
 
@@ -323,6 +325,7 @@ class ComplianceGapUpdate(BaseModel):
     confidence_score: Optional[Decimal] = Field(None, ge=0, le=1)
     false_positive_likelihood: Optional[Decimal] = Field(None, ge=0, le=1)
     session_context: Optional[Dict[str, Any]] = None
+    iso_control: Optional[str] = None
     
     @validator('risk_level', 'business_impact')
     def validate_risk_levels(cls, v):
@@ -388,6 +391,7 @@ class ComplianceGapResponse(ComplianceGapBase):
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
     session_context: Dict[str, Any] = Field(default_factory=dict)
+    iso_control: Optional[str] = None
     
     class Config:
         from_attributes = True

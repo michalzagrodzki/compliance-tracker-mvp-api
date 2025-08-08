@@ -1688,6 +1688,7 @@ def create_new_compliance_gap(
                 "updated_at": datetime.now(timezone.utc),
                 "ip_address": ip_address,
                 "user_agent": user_agent,
+                "iso_control": request_data.iso_control,
             }
         elif request_data.creation_method == "direct":
             logging.info(f"Creating compliance gap with title: {request_data.gap_title}")
