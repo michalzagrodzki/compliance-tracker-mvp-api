@@ -171,6 +171,7 @@ class AuditSessionUpdate(BaseModel):
     session_summary: Optional[str] = Field(None, description="Summary of the audit session")
     is_active: Optional[bool] = Field(None, description="Whether the session is active")
     total_queries: Optional[int] = Field(None, description="Total number of queries in the session")
+    audit_report: Optional[UUID] = Field(..., description="ID of the audit report created from this session")
 
 class AuditSessionResponse(AuditSessionBase):
     id: UUID = Field(..., description="Unique session identifier")
@@ -182,6 +183,7 @@ class AuditSessionResponse(AuditSessionBase):
     is_active: bool = Field(default=True, description="Whether the session is active")
     ip_address: Optional[str] = Field(None, description="Client IP address")
     user_agent: Optional[str] = Field(None, description="User agent string")
+    audit_report: Optional[UUID] = Field(..., description="ID of the audit report created from this session")
 
     class Config:
         from_attributes = True

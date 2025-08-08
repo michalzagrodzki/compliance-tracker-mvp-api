@@ -214,7 +214,8 @@ def update_audit_session(
     ended_at: Optional[datetime] = None,
     session_summary: Optional[str] = None,
     is_active: Optional[bool] = None,
-    total_queries: Optional[int] = None
+    total_queries: Optional[int] = None,
+    audit_report: Optional[str] = None
 ) -> Dict[str, Any]:
     try:
         logger.info(f"Updating audit session {session_id}")
@@ -232,6 +233,9 @@ def update_audit_session(
         
         if total_queries is not None:
             update_data["total_queries"] = total_queries
+
+        if audit_report is not None:
+            update_data["audit_report"] = audit_report
         
         if not update_data:
             raise HTTPException(status_code=400, detail="No update data provided")

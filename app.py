@@ -2,7 +2,7 @@ import datetime
 import os
 from pathlib import Path
 import uuid
-from fastapi import Depends, FastAPI, HTTPException, APIRouter, File, Request, UploadFile, Form, Path, Body, Query
+from fastapi import Depends, FastAPI, HTTPException, APIRouter, File, Request, UploadFile, Form, Path, Body, Query,status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
 from auth.decorators import ValidatedUser, authorize
@@ -1143,7 +1143,8 @@ def update_existing_audit_session(
         ended_at=update_data.ended_at,
         session_summary=update_data.session_summary,
         is_active=update_data.is_active,
-        total_queries=update_data.total_queries
+        total_queries=update_data.total_queries,
+        audit_report=update_data.audit_report
     )
 
 @router_v1.put("/audit-sessions/{session_id}/close",
@@ -2065,32 +2066,65 @@ def create_new_audit_report(
     report_data: AuditReportCreate = Body(..., description="Audit report data"),
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    report_dict = report_data.model_dump()
+    try:
+        report_dict = report_data.model_dump()
 
-    if current_user.role != "admin" and str(report_dict.get("user_id")) != str(current_user.id):
-        report_dict["user_id"] = current_user.id
-    
-    for field in ["user_id", "audit_session_id"]:
-        if field in report_dict and report_dict[field]:
-            report_dict[field] = str(report_dict[field])
-    
-    for field in ["compliance_gap_ids", "document_ids", "pdf_ingestion_ids"]:
-        if field in report_dict and report_dict[field]:
-            report_dict[field] = [str(uuid_val) for uuid_val in report_dict[field]]
-    
-    created_report = create_audit_report(report_dict)
+        if current_user.role != "admin" and str(report_dict.get("user_id")) != str(current_user.id):
+            report_dict["user_id"] = current_user.id
 
-    serialized_report = serialize_uuids(created_report)
-    
-    create_audit_report_version(
-        audit_report_id=created_report["id"],
-        changed_by=str(current_user.id),
-        change_description="Initial report creation",
-        change_type="draft_update",
-        report_snapshot=serialized_report
-    )
-    
-    return created_report
+        for field in ["user_id", "audit_session_id"]:
+            if field in report_dict and report_dict[field]:
+                report_dict[field] = str(report_dict[field])
+
+        for field in ["compliance_gap_ids", "document_ids", "pdf_ingestion_ids"]:
+            if field in report_dict and report_dict[field]:
+                report_dict[field] = [str(uuid_val) for uuid_val in report_dict[field]]
+
+        try:
+            created_report = create_audit_report(report_dict)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error creating audit report: {str(e)}"
+            )
+
+        serialized_report = serialize_uuids(created_report)
+
+        try:
+            create_audit_report_version(
+                audit_report_id=created_report["id"],
+                changed_by=str(current_user.id),
+                change_description="Initial report creation",
+                change_type="draft_update",
+                report_snapshot=serialized_report
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error creating audit report version: {str(e)}"
+            )
+
+        try:
+            update_audit_session(
+                audit_report=created_report["id"]
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error updating audit session: {str(e)}"
+            )
+
+        return created_report
+
+    except HTTPException:
+        # Already handled above, just propagate
+        raise
+    except Exception as e:
+        # Fallback for any unexpected error
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
 
 @router_v1.post("/audit-reports/generate",
     summary="Generate audit report from session",
