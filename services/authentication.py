@@ -1,42 +1,15 @@
 import logging
-from datetime import datetime
-from typing import Any, Optional, Dict, List
-from fastapi import HTTPException, Depends, status
+from typing import Optional, Dict, List
+from fastapi import HTTPException, Depends, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import Client
+from auth.decorators import ValidatedUser
+from auth.models import RefreshTokenRequest, TokenResponse, UserLogin, UserResponse, UserSignup
 from db.supabase_client import create_supabase_client
 from config.config import settings
-from pydantic import BaseModel, EmailStr
 from config.config import settings
 
 logger = logging.getLogger(__name__)
-
-class UserSignup(BaseModel):
-    email: EmailStr
-    password: str
-
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
-
-class UserResponse(BaseModel):
-    id: str
-    email: str
-    full_name: str
-    role: str
-    compliance_domains: List[str]
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    expires_in: int
-
-class RefreshTokenRequest(BaseModel):
-    refresh_token: str
 
 security = HTTPBearer()
 
@@ -233,16 +206,6 @@ class AuthService:
                 detail="Authentication failed"
             )
 
-class AuthenticatedUser:
-    def __init__(self, id: str, email: str, user_data: Dict[str, Any]):
-        self.id = id
-        self.email = email
-        self.user_data = user_data
-        self.is_active = user_data.get("is_active", True)
-    
-    def __str__(self):
-        return f"User(id={self.user_id}, email={self.email})"
-    
 auth_service = AuthService()
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserResponse:
@@ -294,3 +257,70 @@ def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials
         return auth_service.get_current_user(credentials.credentials)
     except HTTPException:
         return None
+
+def _extract_access_token(request: Request) -> Optional[str]:
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth and auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+    for name in ("access_token", "Authorization", "auth_token", "token"):
+        if name in request.cookies:
+            return request.cookies[name]
+    return None
+
+def authenticate_and_authorize(
+    request: Request,
+    allowed_roles: Optional[List[str]] = None,
+    domains: Optional[List[str]] = None,
+    check_active: bool = True,
+) -> ValidatedUser:
+    """
+    - Extracts token from headers/cookies
+    - Uses your AuthService to resolve the user (reuses Supabase)
+    - Applies the same checks as your @authorize decorator
+    - Returns a ValidatedUser-like object for downstream code
+    """
+    token = _extract_access_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization token")
+
+    user = auth_service.get_current_user(token)
+
+    if check_active and not getattr(user, "is_active", True):
+        raise HTTPException(status_code=403, detail="Your account has been deactivated. Please contact support.")
+
+    if allowed_roles and getattr(user, "role", None) not in allowed_roles:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    if domains:
+        user_domains = getattr(user, "compliance_domains", []) or []
+        if not any(d in user_domains for d in domains):
+            raise HTTPException(status_code=403, detail="Access denied.")
+
+    try:
+        data = user.model_dump() if hasattr(user, "model_dump") else dict(user)
+    except Exception:
+        data = {
+            "id": getattr(user, "id", None),
+            "email": getattr(user, "email", None),
+            "role": getattr(user, "role", None),
+            "compliance_domains": getattr(user, "compliance_domains", []) or [],
+            "is_active": getattr(user, "is_active", True),
+        }
+
+    if "role" in data and "compliance_domains" in data:
+        try:
+            return ValidatedUser(
+                id=data.get("id"),
+                email=data.get("email"),
+                user_data=data 
+            )
+        except TypeError:
+            return ValidatedUser(
+                id=data.get("id"),
+                email=data.get("email"),
+                role=data.get("role"),
+                compliance_domains=data.get("compliance_domains") or [],
+                is_active=data.get("is_active", True),
+            )
+    else:
+        raise HTTPException(status_code=500, detail="Authorization failed")

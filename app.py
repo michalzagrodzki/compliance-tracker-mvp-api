@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from auth.decorators import ValidatedUser, authorize
 from security.input_validator import SecurityError, validate_and_secure_query_request
 from services.audit_log import create_audit_log, get_audit_log_by_id, list_audit_logs, list_audit_logs_by_audit_session, list_audit_logs_by_compliance_domain, list_audit_logs_by_object, list_audit_logs_by_user, list_audit_logs_filtered
-from services.authentication import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
+from services.authentication import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup, authenticate_and_authorize
 from services.chat_history import get_audit_session_history, get_chat_history, get_chat_history_item, get_domain_history, get_user_history, insert_chat_history
 from services.compliance_domain import get_compliance_domain_by_code, list_compliance_domains
 from services.compliance_gap_recommendation import generate_compliance_recommendation
@@ -498,12 +498,18 @@ def query_qa(
     description="Streamed responses with full audit trail logging and compliance domain filtering.",
     tags=["RAG"],
 )
-@authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 def query_stream(
     req: QueryRequest, 
     request: Request,
-    current_user: ValidatedUser = None
 ):
+    
+    current_user = authenticate_and_authorize(
+        request=request,
+        allowed_roles=["admin", "compliance_officer"],
+        domains=["ISO27001"],
+        check_active=True,
+    )
+
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
     

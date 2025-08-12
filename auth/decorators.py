@@ -1,33 +1,14 @@
 from functools import wraps
 import inspect
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from fastapi import Depends, HTTPException
 from fastapi_decorators import depends
-
-from services.authentication import AuthenticatedUser, get_current_active_user
+from auth.models import AuthenticatedUser, ValidatedUser
+from services.authentication import get_current_active_user
 from services.user_management import get_user_by_id
 
 logger = logging.getLogger(__name__)
-
-class ValidatedUser(AuthenticatedUser):
-    def __init__(self, id: str, email: str, user_data: Dict[str, Any]):
-        super().__init__(id, email, user_data)
-        self.full_name = user_data.get("full_name")
-        self.role = user_data.get("role")
-        self.compliance_domains = user_data.get("compliance_domains", [])
-        self.created_at = user_data.get("created_at")
-        self.updated_at = user_data.get("updated_at")
-        self.is_active = user_data.get("is_active", False)
-    
-    def has_compliance_access(self, domains: List[str]) -> bool:
-        return any(domain in self.compliance_domains for domain in domains)
-    
-    def has_all_compliance_access(self, domains: List[str]) -> bool:
-        return all(domain in self.compliance_domains for domain in domains)
-    
-    def has_role_access(self, allowed_roles: List[str]) -> bool:
-        return self.role in allowed_roles
 
 def authorize(
     domains: Optional[List[str]] = None,
