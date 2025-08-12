@@ -594,6 +594,7 @@ class ComplianceGapFromChatHistoryRequest(BaseModel):
 class ComplianceRecommendationRequest(BaseModel):
     chat_history_item: ChatHistoryItem
     recommendation_type: str = Field(..., description="Type of recommendation to generate")
+    iso_control: Optional[str] = Field(None, description="ISO 27001 control identifier (e.g., 'A.8.1.1')")
 
 class ComplianceRecommendationResponse(BaseModel):
     recommendation_text: str

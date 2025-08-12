@@ -1846,6 +1846,7 @@ def create_compliance_recommendation(
         recommendation_text = generate_compliance_recommendation(
             chat_history_item=req.chat_history_item.model_dump(),
             recommendation_type=req.recommendation_type,
+            iso_control=req.iso_control
         )
     except HTTPException:
         raise
