@@ -2147,6 +2147,7 @@ def create_new_audit_report(
 
         try:
             update_audit_session(
+                session_id=report_data.audit_session_id,
                 audit_report=created_report["id"]
             )
         except Exception as e:
