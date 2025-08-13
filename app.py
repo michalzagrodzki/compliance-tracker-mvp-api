@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 from pathlib import Path
 import uuid
@@ -135,6 +136,7 @@ from services.audit_report_distributions import (
     cleanup_expired_distributions,
     get_distribution_access_summary
 )
+from services.audit_sessions import add_pdf_ingestion_to_session, get_pdf_ingestions_for_session
 from datetime import datetime, time, timezone
 from services.audit_sessions import ( delete_audit_session, get_audit_session_statistics )
 from services.target_audience_summary import generate_target_audience_summary
@@ -161,6 +163,39 @@ async def security_error_handler(request: Request, exc: SecurityError):
     return {"detail": str(exc), "type": "security_error"}
 
 router_v1 = APIRouter(prefix="/v1")
+
+## ------ remove later 
+def _redact_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    redacted = {}
+    for k, v in headers.items():
+        if k.lower() == "authorization" and isinstance(v, str):
+            parts = v.split()
+            if len(parts) == 2:
+                scheme, token = parts
+                v = f"{scheme} {token[:4]}…{token[-4:]}"
+        redacted[k] = v
+    return redacted
+
+def dump_request(request: Request) -> Dict[str, Any]:
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    cookies = dict(request.cookies)
+
+    info = {
+        "method": request.method,
+        "url": str(request.url),
+        "client": getattr(request.client, "host", None),
+        "query": dict(request.query_params),
+        "has_auth_header": bool(auth),
+        "auth_scheme": (auth.split()[0] if auth else None),
+        "cookies": list(cookies.keys()),
+        "headers": _redact_headers(dict(request.headers)),
+    }
+
+    # If you need the raw body for debugging (be careful—this consumes it):
+    # body = await request.body()
+    # info["body_len"] = len(body) if body else 0
+    return info
+## ------ remove later 
 
 @router_v1.get("/test-db",
                tags=["Health"])
@@ -502,9 +537,8 @@ def query_stream(
     req: QueryRequest, 
     request: Request,
 ):
-    
     current_user = authenticate_and_authorize(
-        request=request,
+        request=request,        
         allowed_roles=["admin", "compliance_officer"],
         domains=["ISO27001"],
         check_active=True,
@@ -1220,8 +1254,6 @@ def add_pdf_ingestion_to_audit_session(
     request_data: AuditSessionPdfIngestionCreate = Body(..., description="PDF ingestion to add"),
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    from services.audit_sessions import add_pdf_ingestion_to_session
-    
     return add_pdf_ingestion_to_session(
         session_id=session_id,
         pdf_ingestion_id=str(request_data.pdf_ingestion_id),
@@ -1265,8 +1297,6 @@ def get_audit_session_pdf_ingestions(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
 ) -> List[PdfIngestionWithRelationship]:
-    from services.audit_sessions import get_pdf_ingestions_for_session
-    
     results = get_pdf_ingestions_for_session(
         session_id=session_id,
         skip=skip,
