@@ -567,6 +567,7 @@ class ComplianceGapFromChatHistoryRequest(BaseModel):
     
     confidence_score: Decimal = Field(0.90, ge=0, le=1, description="Confidence in this gap")
     false_positive_likelihood: Decimal = Field(0.10, ge=0, le=1, description="False positive probability")
+    iso_control: Optional[str] = Field(None, description="Control element from ISO")
     
     @validator('gap_type')
     def validate_gap_type(cls, v):
