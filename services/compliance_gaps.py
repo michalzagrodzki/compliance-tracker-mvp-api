@@ -251,7 +251,7 @@ def create_compliance_gap(gap_data: Dict[str, Any]) -> Dict[str, Any]:
             "similarity_threshold_used", "best_match_score", "potential_fine_amount",
             "assigned_to", "due_date", "resolution_notes", "recommendation_type",
             "recommendation_text", "acknowledged_at", "resolved_at", "last_reviewed_at",
-            "ip_address", "user_agent"
+            "ip_address", "user_agent", "assigned_to", "due_date" "resolution_notes"
         }
         
         filtered_gap_data = {}

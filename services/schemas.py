@@ -262,6 +262,9 @@ class ComplianceGapCreate(ComplianceGapBase):
     user_agent: Optional[str] = Field(None, description="User agent string")
     session_context: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional context")
     iso_control: Optional[str] = Field(None, description="Control element from ISO")
+
+    assigned_to: Optional[str] = None
+    due_date: Optional[datetime] = None
     
     @validator('risk_level', 'business_impact')
     def validate_risk_levels(cls, v):
@@ -568,6 +571,10 @@ class ComplianceGapFromChatHistoryRequest(BaseModel):
     confidence_score: Decimal = Field(0.90, ge=0, le=1, description="Confidence in this gap")
     false_positive_likelihood: Decimal = Field(0.10, ge=0, le=1, description="False positive probability")
     iso_control: Optional[str] = Field(None, description="Control element from ISO")
+
+    assigned_to: Optional[str] = None
+    due_date: Optional[datetime] = None
+    resolution_notes: Optional[str] = None
     
     @validator('gap_type')
     def validate_gap_type(cls, v):

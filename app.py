@@ -1671,7 +1671,6 @@ def create_new_compliance_gap(
     user_agent = request.headers.get("user-agent")
     
     try:
-        # Check the creation method
         if request_data.creation_method == "from_chat_history":
             logging.info(f"Creating compliance gap from chat history ID: {request_data.chat_history_id}")
             
@@ -1718,7 +1717,7 @@ def create_new_compliance_gap(
                 "recommendation_text": request_data.recommendation_text,
                 "recommended_actions": request_data.recommended_actions,
                 "related_documents": request_data.related_documents or chat_history.get("source_document_ids", []),
-                "detection_method": "manual_review",  # Since this is created manually from chat history
+                "detection_method": "manual_review",
                 "confidence_score": request_data.confidence_score,
                 "false_positive_likelihood": request_data.false_positive_likelihood,
                 "auto_generated": False,
@@ -1728,6 +1727,9 @@ def create_new_compliance_gap(
                 "ip_address": ip_address,
                 "user_agent": user_agent,
                 "iso_control": request_data.iso_control,
+                "assigned_to": request_data.assigned_to,
+                "due_date": request_data.due_date,
+                "resolution_notes": request_data.resolution_notes
             }
         elif request_data.creation_method == "direct":
             logging.info(f"Creating compliance gap with title: {request_data.gap_title}")
