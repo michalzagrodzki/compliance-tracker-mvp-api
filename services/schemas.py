@@ -257,9 +257,7 @@ class ComplianceGapCreate(ComplianceGapBase):
     detection_method: str = Field("query_analysis", description="How the gap was detected")
     confidence_score: Optional[Decimal] = Field(0.80, ge=0, le=1, description="Detection confidence")
     false_positive_likelihood: Optional[Decimal] = Field(0.20, ge=0, le=1, description="False positive probability")
-    
-    ip_address: Optional[str] = Field(None, description="Client IP address")
-    user_agent: Optional[str] = Field(None, description="User agent string")
+
     session_context: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional context")
     iso_control: Optional[str] = Field(None, description="Control element from ISO")
 
