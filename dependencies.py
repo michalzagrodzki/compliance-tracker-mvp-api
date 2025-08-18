@@ -8,9 +8,13 @@ from fastapi import Depends
 
 from db.supabase_client import create_supabase_client
 from repositories.user_repository import UserRepository
+from repositories.pdf_ingestion_repository import PdfIngestionRepository
 from repositories.compliance_gap_repository import ComplianceGapRepository
+from repositories.document_repository import DocumentRepository
 from services.auth_service import AuthService, create_auth_service
 from services.compliance_gap_service import ComplianceGapService, create_compliance_gap_service
+from services.document_service import DocumentService, create_document_service
+from services.ingestion_service import IngestionService, create_ingestion_service
 from services.ai_service import AIService, create_ai_service
 from services.compliance_recommendation_service import ComplianceRecommendationService, create_compliance_recommendation_service
 from adapters.openai_adapter import OpenAIAdapter, MockAIAdapter
@@ -38,6 +42,13 @@ def get_compliance_gap_repository() -> ComplianceGapRepository:
 
 
 @lru_cache()
+def get_document_repository() -> DocumentRepository:
+    """Get singleton Document repository."""
+    supabase = get_supabase_client()
+    return DocumentRepository(supabase, settings.supabase_table_documents)
+
+
+@lru_cache()
 def get_auth_service() -> AuthService:
     """Get singleton AuthService with dependencies."""
     supabase = get_supabase_client()
@@ -51,6 +62,27 @@ def get_compliance_gap_service() -> ComplianceGapService:
     gap_repo = get_compliance_gap_repository()
     user_repo = get_user_repository()
     return create_compliance_gap_service(gap_repo, user_repo)
+
+
+@lru_cache()
+def get_document_service() -> DocumentService:
+    repo = get_document_repository()
+    return create_document_service(repo)
+
+
+@lru_cache()
+def get_pdf_ingestion_repository() -> PdfIngestionRepository:
+    """Get singleton PdfIngestion repository."""
+    supabase = get_supabase_client()
+    return PdfIngestionRepository(supabase, settings.supabase_table_pdf_ingestion)
+
+
+@lru_cache()
+def get_ingestion_service() -> IngestionService:
+    """Get singleton IngestionService with dependencies."""
+    repo = get_pdf_ingestion_repository()
+    user_repo = get_user_repository()
+    return create_ingestion_service(repo, user_repo)
 
 
 @lru_cache()
@@ -88,5 +120,9 @@ UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
 ComplianceGapRepositoryDep = Annotated[ComplianceGapRepository, Depends(get_compliance_gap_repository)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 ComplianceGapServiceDep = Annotated[ComplianceGapService, Depends(get_compliance_gap_service)]
+DocumentRepositoryDep = Annotated[DocumentRepository, Depends(get_document_repository)]
+DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
+IngestionRepositoryDep = Annotated[PdfIngestionRepository, Depends(get_pdf_ingestion_repository)]
+IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 AIServiceDep = Annotated[AIService, Depends(get_ai_service)]
 ComplianceRecommendationServiceDep = Annotated[ComplianceRecommendationService, Depends(get_compliance_recommendation_service)]

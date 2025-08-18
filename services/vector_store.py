@@ -1,5 +1,4 @@
 from langchain_community.vectorstores import SupabaseVectorStore
-from langchain_openai import OpenAIEmbeddings
 from langchain.schema import Document
 from config.config import settings
 from db.supabase_client import create_supabase_client
@@ -10,10 +9,14 @@ import uuid
 logger = logging.getLogger(__name__)
 
 class ComplianceSupabaseVectorStore(SupabaseVectorStore):
+    def __init__(self, *args, embedding_adapter=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Optional adapter to decouple embeddings provider
+        self._embedding_adapter = embedding_adapter
+
     def add_documents(self, documents: List[Document], **kwargs) -> List[str]:
         texts = [doc.page_content for doc in documents]
         metadatas = [doc.metadata for doc in documents]
-        
         return self.add_texts(texts, metadatas, **kwargs)
     
     def add_texts(
@@ -25,7 +28,11 @@ class ComplianceSupabaseVectorStore(SupabaseVectorStore):
         if not metadatas:
             metadatas = [{}] * len(texts)
 
-        embeddings = self._embedding.embed_documents(texts)
+        # Use adapter if provided; fallback to LangChain embedding instance
+        if getattr(self, "_embedding_adapter", None) is not None:
+            embeddings = self._embedding_adapter.embed_texts(texts, model=getattr(settings, "embedding_model", None))
+        else:
+            embeddings = self._embedding.embed_documents(texts)
         
         records = []
         for i, (text, metadata, embedding) in enumerate(zip(texts, metadatas, embeddings)):
@@ -108,13 +115,34 @@ class ComplianceSupabaseVectorStore(SupabaseVectorStore):
 
 supabase = create_supabase_client()
 
-embeddings = OpenAIEmbeddings(
-    model=settings.embedding_model,
-    openai_api_key=settings.openai_api_key,
-)
-
-vector_store = ComplianceSupabaseVectorStore(
-    client=supabase,
-    embedding=embeddings,
-    table_name=settings.supabase_table_documents,
-)
+# Prefer our adapter if available; fall back to LangChain embeddings.
+try:
+    from adapters.embeddings_adapter import OpenAIEmbeddingsAdapter, MockEmbeddingsAdapter
+    embedding_adapter = None
+    api_key = getattr(settings, "openai_api_key", None)
+    if api_key:
+        embedding_adapter = OpenAIEmbeddingsAdapter(api_key=api_key, default_model=settings.embedding_model)
+    else:
+        embedding_adapter = MockEmbeddingsAdapter()
+    vector_store = ComplianceSupabaseVectorStore(
+        client=supabase,
+        embedding=None,  # not used when adapter present
+        table_name=settings.supabase_table_documents,
+        embedding_adapter=embedding_adapter,
+    )
+except Exception:
+    # Fallback: use LangChain OpenAIEmbeddings directly
+    try:
+        from langchain_openai import OpenAIEmbeddings
+        embeddings = OpenAIEmbeddings(
+            model=settings.embedding_model,
+            openai_api_key=settings.openai_api_key,
+        )
+        vector_store = ComplianceSupabaseVectorStore(
+            client=supabase,
+            embedding=embeddings,
+            table_name=settings.supabase_table_documents,
+        )
+    except Exception as e:
+        logger.error(f"Failed to initialize embeddings: {e}")
+        raise
