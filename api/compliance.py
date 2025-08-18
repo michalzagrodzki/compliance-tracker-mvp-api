@@ -1,5 +1,5 @@
 from typing import Any, List, Dict, Optional, Union
-from fastapi import APIRouter, Query, Path, Body, Request, HTTPException
+from fastapi import APIRouter, Query, Path, Body, Request, HTTPException, Depends
 import logging
 
 from auth.decorators import ValidatedUser, authorize
@@ -18,7 +18,8 @@ from services.compliance_gaps import (
     get_gaps_by_audit_session,
     get_compliance_gaps_statistics,
 )
-from services.compliance_gap_recommendation import generate_compliance_recommendation
+# from services.compliance_gap_recommendation import generate_compliance_recommendation  # Old implementation
+from dependencies import get_compliance_recommendation_service, get_compliance_gap_repository
 from services.schemas import (
     ComplianceDomain,
     ComplianceGapCreate,
@@ -64,7 +65,7 @@ def get_compliance_domain(
     response_model=List[Dict[str, Any]],
     tags=["Compliance Gaps"]
 )
-@authorize(allowed_roles=["admin"], check_active=True)
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def get_all_compliance_gaps(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
@@ -77,6 +78,7 @@ def get_all_compliance_gaps(
     audit_session_id: Optional[str] = Query(None, description="Filter by audit session"),
     detection_method: Optional[str] = Query(None, description="Filter by detection method"),
     regulatory_requirement: Optional[bool] = Query(None, description="Filter by regulatory requirement status"),
+    current_user: ValidatedUser = None
 ) -> List[Dict[str, Any]]:
     return list_compliance_gaps(
         skip=skip,
@@ -230,25 +232,6 @@ def review_compliance_gap(
         reviewer_user_id=current_user.id
     )
 
-
-@router.post("/compliance-gaps/recommendation",
-    response_model=ComplianceRecommendationResponse,
-    summary="Generate compliance gap recommendation",
-    description="Generate AI-powered recommendations for addressing a compliance gap",
-    tags=["Compliance Gaps"]
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def create_compliance_recommendation(
-    request: ComplianceRecommendationRequest,
-    current_user: ValidatedUser = None
-) -> ComplianceRecommendationResponse:
-    return generate_compliance_recommendation(
-        gap_id=request.gap_id,
-        compliance_domain=request.compliance_domain,
-        user_id=current_user.id
-    )
-
-
 @router.get("/compliance-domains/{domain_code}/gaps",
     summary="Get compliance gaps by domain",
     description="Get all compliance gaps for a specific compliance domain",
@@ -321,3 +304,74 @@ def get_compliance_gap_statistics(
             )
     
     return get_compliance_gaps_statistics(compliance_domain)
+
+# === AI-Powered Compliance Recommendation Endpoints ===
+
+@router.post("/compliance-gaps/recommendation",
+    response_model=ComplianceRecommendationResponse,
+    summary="Generate compliance gap recommendation",
+    description="Generate AI-powered recommendations for addressing a compliance gap",
+    tags=["Compliance Gaps"]
+)
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
+async def create_compliance_recommendation(
+    request: ComplianceRecommendationRequest,
+    current_user: ValidatedUser = None,
+    recommendation_service = Depends(get_compliance_recommendation_service)
+) -> ComplianceRecommendationResponse:
+    
+    # Generate recommendation using the new service
+    recommendation_data = await recommendation_service.generate_gap_recommendation(
+        gap_id=request.gap_id,
+        user_id=current_user.id,
+        recommendation_type="comprehensive",
+        include_implementation_plan=True
+    )
+    
+    # Get gap details for response
+    gap_repo = get_compliance_gap_repository()
+    gap = await gap_repo.get_by_id(request.gap_id)
+    
+    if not gap:
+        raise HTTPException(status_code=404, detail="Compliance gap not found")
+    
+    # Convert to legacy response format (matching ComplianceRecommendationResponse schema)
+    return ComplianceRecommendationResponse(
+        recommendation_text=recommendation_data.get("recommendation_text", ""),
+        recommendation_type="comprehensive",
+        chat_history_id=0,  # Not applicable for gap-based recommendations
+        audit_session_id=gap.audit_session_id,
+        compliance_domain=gap.compliance_domain,
+        generation_metadata={
+            "gap_id": request.gap_id,
+            "priority_level": recommendation_data.get("priority_level", "medium"),
+            "estimated_effort": recommendation_data.get("total_estimated_effort", "unknown"),
+            "implementation_phases": recommendation_data.get("implementation_phases", []),
+            "root_cause_analysis": recommendation_data.get("root_cause_analysis", ""),
+            "remediation_actions": recommendation_data.get("remediation_actions", []),
+            "service_version": "repository_pattern_v1"
+        }
+    )
+
+@router.post("/compliance-gaps/remediation-plan",
+    summary="Generate remediation plan for multiple gaps",
+    description="Generate a comprehensive remediation plan for multiple compliance gaps",
+    response_model=Dict[str, Any],
+    tags=["AI Recommendations"]
+)
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
+async def generate_remediation_plan(
+    gap_ids: List[str] = Body(..., description="List of compliance gap UUIDs"),
+    timeline_weeks: int = Body(12, description="Target timeline in weeks"),
+    resource_constraints: Optional[Dict[str, str]] = Body(None, description="Resource constraints and limitations"),
+    current_user: ValidatedUser = None,
+    recommendation_service = Depends(get_compliance_recommendation_service)
+) -> Dict[str, Any]:
+    """Generate a comprehensive remediation plan for multiple compliance gaps."""
+    
+    return await recommendation_service.generate_remediation_plan(
+        gap_ids=gap_ids,
+        user_id=current_user.id,
+        timeline_weeks=timeline_weeks,
+        resource_constraints=resource_constraints or {}
+    )

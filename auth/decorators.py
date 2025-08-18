@@ -3,7 +3,6 @@ import inspect
 import logging
 from typing import Optional, List
 from fastapi import Depends, HTTPException
-from fastapi_decorators import depends
 from auth.models import AuthenticatedUser, ValidatedUser
 from services.authentication import get_current_active_user
 from services.user_management import get_user_by_id
@@ -82,19 +81,51 @@ def authorize(
     def decorator(func):
         sig = inspect.signature(func)
         expects_current_user = 'current_user' in sig.parameters
-        
+
+        # Prepare dependency once
+        dependency = Depends(create_dependency())
+
         if expects_current_user:
-            return depends(current_user=Depends(create_dependency()))(func)
-        else:
-            dependency = Depends(create_dependency())
-            
+            # Expose `current_user` as a FastAPI dependency parameter
             @wraps(func)
-            async def wrapper(*args, validated_user: ValidatedUser = dependency, **kwargs):    
-                return await func(*args, **kwargs) if inspect.iscoroutinefunction(func) else func(*args, **kwargs)
-            
-            new_params = [p for name, p in sig.parameters.items()]
-            wrapper.__signature__ = sig.replace(parameters=new_params)
-            
+            async def wrapper(*args, current_user: ValidatedUser = dependency, **kwargs):
+                if inspect.iscoroutinefunction(func):
+                    return await func(*args, current_user=current_user, **kwargs)
+                else:
+                    return func(*args, current_user=current_user, **kwargs)
+
+            # Replace only the `current_user` parameter to be a dependency
+            new_params = []
+            for name, p in sig.parameters.items():
+                if name == 'current_user':
+                    p = p.replace(default=dependency, annotation=ValidatedUser)
+                new_params.append(p)
+            wrapper.__signature__ = sig.replace(parameters=tuple(new_params))
+            return wrapper
+        else:
+            # Inject dependency without exposing it as a real request parameter
+            @wraps(func)
+            async def wrapper(*args, _validated_user: ValidatedUser = dependency, **kwargs):
+                if inspect.iscoroutinefunction(func):
+                    return await func(*args, **kwargs)
+                else:
+                    return func(*args, **kwargs)
+
+            # Add a hidden keyword-only dependency parameter to the signature
+            params = list(sig.parameters.values())
+            # Insert before **kwargs if present, otherwise append
+            var_kw_index = next((i for i, p in enumerate(params) if p.kind == inspect.Parameter.VAR_KEYWORD), None)
+            hidden_param = inspect.Parameter(
+                name="_validated_user",
+                kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                default=dependency,
+                annotation=ValidatedUser,
+            )
+            if var_kw_index is not None:
+                params.insert(var_kw_index, hidden_param)
+            else:
+                params.append(hidden_param)
+            wrapper.__signature__ = sig.replace(parameters=tuple(params))
             return wrapper
     
     return decorator

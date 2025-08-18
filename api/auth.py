@@ -271,7 +271,18 @@ async def get_me(current_user: ValidatedUser = None):
         user_id=current_user.id
     )
     
+    profile = {
+        "id": current_user.id,
+        "email": current_user.email,
+        "full_name": getattr(current_user, "full_name", None),
+        "role": getattr(current_user, "role", None),
+        "compliance_domains": getattr(current_user, "compliance_domains", []),
+        "is_active": bool(getattr(current_user, "is_active", False)),
+        "created_at": getattr(current_user, "created_at", None),
+        "updated_at": getattr(current_user, "updated_at", None),
+    }
+
     return create_success_response(
-        data=current_user.model_dump(),
+        data=profile,
         meta={"message": "Profile retrieved successfully"}
     )

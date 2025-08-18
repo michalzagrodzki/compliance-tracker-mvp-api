@@ -3,6 +3,10 @@ Example usage of the Repository pattern with User domain.
 This shows how to use the new repository-based architecture.
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import asyncio
 from typing import List
 
