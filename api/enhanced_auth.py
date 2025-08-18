@@ -1,12 +1,21 @@
-from fastapi import APIRouter, Request, Depends
+"""
+Enhanced authentication router with improved error handling.
+Example of how to use the new error handling system.
+"""
+
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
 from auth.decorators import ValidatedUser, authorize
-from auth.models import UserSignup, UserLogin, RefreshTokenRequest
-from services.authentication import get_current_user
-from dependencies import AuthServiceDep
-
-# Enhanced error handling imports
+from services.authentication import (
+    auth_service,
+    UserSignup,
+    UserLogin,
+    TokenResponse,
+    RefreshTokenRequest,
+    UserResponse,
+    get_current_user,
+)
 from common.exceptions import (
     AuthenticationException,
     AuthorizationException,
@@ -14,7 +23,7 @@ from common.exceptions import (
     InvalidTokenException
 )
 from common.logging import get_logger, log_security_event, log_business_event
-from common.validation import RequestValidator
+from common.validation import RequestValidator, validate_request
 from common.responses import create_success_response
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -26,7 +35,7 @@ logger = get_logger("auth")
     description="Create a new user account with email and password",
     status_code=201
 )
-async def signup(user_data: UserSignup, request: Request, auth_service: AuthServiceDep):
+async def signup(user_data: UserSignup, request: Request):
     """Enhanced signup with comprehensive validation and logging."""
     
     # Enhanced validation
@@ -53,26 +62,26 @@ async def signup(user_data: UserSignup, request: Request, auth_service: AuthServ
         )
         
         # Call service
-        result = await auth_service.signup(user_data)
+        result = auth_service.signup(user_data)
         
-        # Log successful signup (TokenResponse doesn't contain user_id)
+        # Log successful signup
         log_business_event(
             event_type="USER_CREATED",
             entity_type="user",
-            entity_id="new_user",  # We don't have access to user_id from TokenResponse
+            entity_id=result.get("user_id", "unknown"),
             action="create",
             details={"email": user_data.email}
         )
         
         log_security_event(
             event_type="SIGNUP_SUCCESS",
-            user_id=None,  # User ID not available in TokenResponse
+            user_id=result.get("user_id"),
             ip_address=request.client.host if request.client else None,
             details={"email": user_data.email}
         )
         
         return create_success_response(
-            data=result.model_dump(),  # Convert Pydantic model to dict
+            data=result,
             meta={"message": "User created successfully"},
             status_code=201
         )
@@ -104,8 +113,8 @@ async def signup(user_data: UserSignup, request: Request, auth_service: AuthServ
     summary="Login user",
     description="Authenticate user with email and password"
 )
-async def login(login_data: UserLogin, request: Request, auth_service: AuthServiceDep):
-    """Enhanced login with security logging."""
+async def login(login_data: UserLogin, request: Request):
+    """Enhanced login with rate limiting and security logging."""
     
     try:
         # Log login attempt
@@ -116,18 +125,18 @@ async def login(login_data: UserLogin, request: Request, auth_service: AuthServi
         )
         
         # Call service
-        result = await auth_service.login(login_data)
+        result = auth_service.login(login_data)
         
         # Log successful login
         log_security_event(
             event_type="LOGIN_SUCCESS",
-            user_id=None,  # User ID not available in TokenResponse
+            user_id=result.get("user_id"),
             ip_address=request.client.host if request.client else None,
             details={"email": login_data.email}
         )
         
         return create_success_response(
-            data=result.model_dump(),  # Convert Pydantic model to dict
+            data=result,
             meta={"message": "Login successful"}
         )
         
@@ -157,7 +166,7 @@ async def login(login_data: UserLogin, request: Request, auth_service: AuthServi
     description="Get a new access token using refresh token"
 )
 @authorize(check_active=True)
-async def refresh_token(refresh_data: RefreshTokenRequest, request: Request, auth_service: AuthServiceDep):
+async def refresh_token(refresh_data: RefreshTokenRequest, request: Request):
     """Enhanced token refresh with validation."""
     
     try:
@@ -168,17 +177,17 @@ async def refresh_token(refresh_data: RefreshTokenRequest, request: Request, aut
             )
         
         # Call service
-        result = await auth_service.refresh_token(refresh_data)
+        result = auth_service.refresh_token(refresh_data)
         
         # Log token refresh
         log_security_event(
             event_type="TOKEN_REFRESHED",
-            user_id=None,  # User ID not available in TokenResponse
+            user_id=result.get("user_id"),
             ip_address=request.client.host if request.client else None
         )
         
         return create_success_response(
-            data=result.model_dump(),  # Convert Pydantic model to dict
+            data=result,
             meta={"message": "Token refreshed successfully"}
         )
         
@@ -207,8 +216,7 @@ async def refresh_token(refresh_data: RefreshTokenRequest, request: Request, aut
 )
 async def logout(
     request: Request,
-    auth_service: AuthServiceDep,
-    credentials: HTTPAuthorizationCredentials = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = get_current_user
 ):
     """Enhanced logout with proper token invalidation."""
     
@@ -219,7 +227,7 @@ async def logout(
             user_id = credentials.user_id
         
         # Call service
-        result = await auth_service.logout(credentials.credentials)
+        result = auth_service.logout(credentials.credentials)
         
         # Log logout
         log_security_event(

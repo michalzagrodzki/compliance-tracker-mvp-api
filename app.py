@@ -8,6 +8,12 @@ from security.input_validator import SecurityError
 from services.db_check import check_database_connection
 from auth.decorators import authorize
 
+# Enhanced error handling imports
+from common.logging import setup_logging, get_logger
+from common.middleware import setup_middleware
+from common.exceptions import BaseRAGException
+from common.responses import create_error_response
+
 # Import routers
 from api.auth import router as auth_router
 from api.documents import router as documents_router
@@ -26,10 +32,13 @@ from api.threat_intelligence import router as threat_intelligence_router
 from api.risk_prioritization import router as risk_prioritization_router
 from api.target_audience import router as target_audience_router
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+# Setup enhanced logging
+setup_logging(
+    level="INFO",
+    format_type="structured"
 )
+
+logger = get_logger("main")
 
 app = FastAPI(
     title="RAG FastAPI Supabase API",
@@ -38,12 +47,55 @@ app = FastAPI(
     openapi_tags=tags_metadata,
 )
 
+# Setup middleware (includes error handling)
+setup_middleware(app)
+
 configure_cors(app)
+
+
+@app.get("/", 
+    summary="Root endpoint", 
+    description="Simple health check and API info"
+)
+async def root():
+    """Root endpoint for basic health check."""
+    return {
+        "message": "RAG FastAPI Supabase API",
+        "version": "1.0.0",
+        "status": "healthy",
+        "docs": "/docs",
+        "redoc": "/redoc"
+    }
 
 
 @app.exception_handler(SecurityError)
 async def security_error_handler(request: Request, exc: SecurityError):
-    return {"detail": str(exc), "type": "security_error"}
+    logger.warning(f"Security error: {exc}", extra={
+        "path": str(request.url.path),
+        "method": request.method,
+        "client_ip": request.client.host if request.client else None
+    })
+    return create_error_response(
+        error_code="SECURITY_ERROR",
+        message=str(exc),
+        status_code=400
+    )
+
+
+@app.exception_handler(BaseRAGException)
+async def rag_exception_handler(request: Request, exc: BaseRAGException):
+    logger.error(f"RAG exception: {exc.error_code}", extra={
+        "error_code": exc.error_code,
+        "context": exc.context,
+        "path": str(request.url.path),
+        "method": request.method
+    })
+    return create_error_response(
+        error_code=exc.error_code,
+        message=exc.detail,
+        status_code=exc.status_code,
+        context=exc.context
+    )
 
 
 
