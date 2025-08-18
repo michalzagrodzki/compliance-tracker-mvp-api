@@ -9,12 +9,14 @@ from fastapi import Depends
 from db.supabase_client import create_supabase_client
 from repositories.user_repository import UserRepository
 from repositories.pdf_ingestion_repository import PdfIngestionRepository
+from repositories.chat_history_repository import ChatHistoryRepository
 from repositories.compliance_gap_repository import ComplianceGapRepository
 from repositories.document_repository import DocumentRepository
 from services.auth_service import AuthService, create_auth_service
 from services.compliance_gap_service import ComplianceGapService, create_compliance_gap_service
 from services.document_service import DocumentService, create_document_service
 from services.ingestion_service import IngestionService, create_ingestion_service
+from services.chat_history_service import ChatHistoryService, create_chat_history_service
 from services.ai_service import AIService, create_ai_service
 from services.compliance_recommendation_service import ComplianceRecommendationService, create_compliance_recommendation_service
 from adapters.openai_adapter import OpenAIAdapter, MockAIAdapter
@@ -86,6 +88,19 @@ def get_ingestion_service() -> IngestionService:
 
 
 @lru_cache()
+def get_chat_history_repository() -> ChatHistoryRepository:
+    """Get singleton ChatHistory repository."""
+    supabase = get_supabase_client()
+    return ChatHistoryRepository(supabase, settings.supabase_table_chat_history)
+
+
+@lru_cache()
+def get_chat_history_service() -> ChatHistoryService:
+    repo = get_chat_history_repository()
+    return create_chat_history_service(repo)
+
+
+@lru_cache()
 def get_ai_adapter():
     """Get AI adapter (OpenAI or Mock based on configuration)."""
     # Check if we have OpenAI API key
@@ -124,5 +139,7 @@ DocumentRepositoryDep = Annotated[DocumentRepository, Depends(get_document_repos
 DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
 IngestionRepositoryDep = Annotated[PdfIngestionRepository, Depends(get_pdf_ingestion_repository)]
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
+ChatHistoryRepositoryDep = Annotated[ChatHistoryRepository, Depends(get_chat_history_repository)]
+ChatHistoryServiceDep = Annotated[ChatHistoryService, Depends(get_chat_history_service)]
 AIServiceDep = Annotated[AIService, Depends(get_ai_service)]
 ComplianceRecommendationServiceDep = Annotated[ComplianceRecommendationService, Depends(get_compliance_recommendation_service)]
