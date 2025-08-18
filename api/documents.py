@@ -2,14 +2,8 @@ from typing import Any, List, Dict, Optional
 from fastapi import APIRouter, Request, Query, Path
 
 from auth.decorators import authorize
-from services.document import (
-    get_documents_by_tags,
-    list_documents,
-    get_documents_by_source_filename,
-    get_documents_by_compliance_domain,
-    get_documents_by_version,
-    get_documents_by_domain_and_version
-)
+from dependencies import DocumentServiceDep
+from entities.document import DocumentFilter
 from services.schemas import DocumentTagConstants, DocumentTagsRequest
 
 # Enhanced error handling imports
@@ -30,7 +24,7 @@ logger = get_logger("documents")
     summary="List documents with enhanced filtering including tags",
     description="Fetches paginated documents with comprehensive filtering by tags, compliance domain, version, etc."
 )
-@authorize(allowed_roles=["admin"], check_active=True)
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 async def get_all_documents(
     request: Request,
     skip: int = Query(0, ge=0, description="Number of records to skip for pagination"),
@@ -43,6 +37,7 @@ async def get_all_documents(
     approval_status: Optional[str] = Query(None, description="Filter by approval status"),
     uploaded_by: Optional[str] = Query(None, description="Filter by uploader user ID"),
     approved_by: Optional[str] = Query(None, description="Filter by approver user ID"),
+    document_service: DocumentServiceDep = None,
 ) -> Any:
     """Enhanced document listing with validation and logging."""
     import time
@@ -64,10 +59,8 @@ async def get_all_documents(
                 value=tags_match_mode
             )
         
-        # Call service
-        result = list_documents(
-            skip=skip,
-            limit=limit,
+        # Build filters and call service
+        filters = DocumentFilter(
             compliance_domain=compliance_domain,
             document_version=document_version,
             source_filename=source_filename,
@@ -75,8 +68,12 @@ async def get_all_documents(
             tags_match_mode=tags_match_mode,
             approval_status=approval_status,
             uploaded_by=uploaded_by,
-            approved_by=approved_by
+            approved_by=approved_by,
         )
+        chunks = await document_service.list(skip=skip, limit=limit, filters=filters)
+        total = await document_service.count(filters=filters)
+        # Convert to dicts and exclude embedding from response
+        result = [chunk.model_dump(mode="json", exclude={"embedding"}) for chunk in chunks]
         
         # Log business event
         log_business_event(
@@ -106,21 +103,17 @@ async def get_all_documents(
             item_count=len(result.get("documents", [])) if isinstance(result, dict) else len(result)
         )
         
-        # Return paginated response if result has pagination info
-        if isinstance(result, dict) and "documents" in result:
-            return create_paginated_response(
-                data=result["documents"],
-                total=result.get("total", 0),
-                skip=skip,
-                limit=limit,
-                filters_applied={
-                    "compliance_domain": compliance_domain,
-                    "document_version": document_version,
-                    "tags_match_mode": tags_match_mode
-                }
-            )
-        else:
-            return create_success_response(data=result)
+        return create_paginated_response(
+            data=result,
+            total=total,
+            skip=skip,
+            limit=limit,
+            filters_applied={
+                "compliance_domain": compliance_domain,
+                "document_version": document_version,
+                "tags_match_mode": tags_match_mode,
+            },
+        )
         
     except (ValidationException, BusinessLogicException):
         raise
@@ -139,16 +132,18 @@ async def get_all_documents(
     response_model=List[Dict[str, Any]]
 )
 @authorize(allowed_roles=["admin"], check_active=True)
-def get_documents_by_tags_endpoint(
+async def get_documents_by_tags_endpoint(
     request: DocumentTagsRequest,
+    document_service: DocumentServiceDep = None,
 ) -> List[Dict[str, Any]]:
-    return get_documents_by_tags(
+    chunks = await document_service.by_tags(
         tags=request.document_tags,
         match_mode=request.tags_match_mode,
         compliance_domain=request.compliance_domain,
         skip=request.skip,
-        limit=request.limit
+        limit=request.limit,
     )
+    return [c.model_dump(mode="json", exclude={"embedding"}) for c in chunks]
 
 
 @router.get("/by-source/{source_filename}",
@@ -158,7 +153,8 @@ def get_documents_by_tags_endpoint(
 @authorize(allowed_roles=["admin"], check_active=True)
 async def get_documents_by_source(
     source_filename: str,
-    request: Request
+    request: Request,
+    document_service: DocumentServiceDep = None,
 ) -> Any:
     """Enhanced source file document retrieval."""
     
@@ -172,7 +168,8 @@ async def get_documents_by_source(
             )
         
         # Call service
-        result = get_documents_by_source_filename(source_filename.strip())
+        chunks = await document_service.by_source(source_filename.strip())
+        result = [c.model_dump(mode="json", exclude={"embedding"}) for c in chunks]
         
         # Check if documents were found
         if not result:
@@ -212,12 +209,14 @@ async def get_documents_by_source(
     response_model=List[Dict[str, Any]]
 )
 @authorize(allowed_roles=["admin"], check_active=True)
-def get_documents_by_domain(
+async def get_documents_by_domain(
     compliance_domain: str,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
+    document_service: DocumentServiceDep = None,
 ) -> Any:
-    return get_documents_by_compliance_domain(compliance_domain, skip, limit)
+    chunks = await document_service.by_domain(compliance_domain, skip=skip, limit=limit)
+    return [c.model_dump(mode="json", exclude={"embedding"}) for c in chunks]
 
 
 @router.get("/by-version/{document_version}",
@@ -226,12 +225,14 @@ def get_documents_by_domain(
     response_model=List[Dict[str, Any]]
 )
 @authorize(allowed_roles=["admin"], check_active=True)
-def get_documents_by_version(
+async def get_documents_by_version(
     document_version: str,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
+    document_service: DocumentServiceDep = None,
 ) -> Any:
-    return get_documents_by_version(document_version, skip, limit)
+    chunks = await document_service.by_version(document_version, skip=skip, limit=limit)
+    return [c.model_dump(mode="json", exclude={"embedding"}) for c in chunks]
 
 
 @router.get("/tags/{tag}/documents",
@@ -240,19 +241,21 @@ def get_documents_by_version(
     response_model=List[Dict[str, Any]]
 )
 @authorize(allowed_roles=["admin"], check_active=True)
-def get_documents_with_tag(
+async def get_documents_with_tag(
     tag: str = Path(..., description="Tag to search for"),
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
+    document_service: DocumentServiceDep = None,
 ) -> List[Dict[str, Any]]:
-    return get_documents_by_tags(
+    chunks = await document_service.by_tags(
         tags=[tag],
         match_mode="any",
         compliance_domain=compliance_domain,
         skip=skip,
-        limit=limit
+        limit=limit,
     )
+    return [{k: v for k, v in c.model_dump().items() if k != "embedding"} for c in chunks]
 
 
 @router.get("/by-domain-version/{compliance_domain}/{document_version}",
