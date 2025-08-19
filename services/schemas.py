@@ -1743,7 +1743,7 @@ class CreateISOControlRequest(BaseModel):
     controls: Dict[str, Any] = Field(default_factory=dict, description="Control definitions as JSON object")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "name": "ISO 27001",
                 "controls": {
@@ -1768,7 +1768,7 @@ class UpdateISOControlRequest(BaseModel):
     controls: Optional[Dict[str, Any]] = Field(None, description="Control definitions as JSON object")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "name": "ISO 27001:2022",
                 "controls": {
@@ -1791,7 +1791,7 @@ class ISOControlResponse(BaseModel):
     updated_at: datetime = Field(..., description="Last update timestamp")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "123e4567-e89b-12d3-a456-426614174000",
                 "name": "ISO 27001",
@@ -1817,7 +1817,7 @@ class ISOControlStatsResponse(BaseModel):
     completion_rate_percent: float = Field(..., description="Percentage of standards that have controls defined")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "total_iso_standards": 12,
                 "standards_with_controls": 10,
@@ -1832,7 +1832,7 @@ class DeleteISOControlResponse(BaseModel):
     message: str = Field(..., description="Confirmation message")
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "message": "ISO control 'ISO 27001' deleted successfully"
             }
