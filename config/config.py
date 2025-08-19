@@ -100,7 +100,7 @@ tags_metadata = [
         "description": "Chat history operations.",
     },
     {
-        "name": "Compliance",
+        "name": "Compliance Domains",
         "description": "Compliance domain management operations.",
     },
     {

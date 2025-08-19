@@ -18,7 +18,8 @@ from common.responses import create_error_response
 from api.auth import router as auth_router
 from api.documents import router as documents_router
 from api.rag import router as rag_router
-from api.compliance import router as compliance_router
+from api.compliance_gaps import router as compliance_gaps_router
+from api.compliance_domains import router as compliance_domains_router
 from api.audit_sessions import router as audit_sessions_router
 from api.audit_reports import router as audit_reports_router
 from api.audit_logs import router as audit_logs_router
@@ -104,7 +105,8 @@ async def rag_exception_handler(request: Request, exc: BaseRAGException):
 app.include_router(auth_router, prefix="/v1")
 app.include_router(documents_router, prefix="/v1")
 app.include_router(rag_router, prefix="/v1")
-app.include_router(compliance_router, prefix="/v1")
+app.include_router(compliance_gaps_router, prefix="/v1")
+app.include_router(compliance_domains_router, prefix="/v1")
 app.include_router(audit_sessions_router, prefix="/v1")
 app.include_router(audit_reports_router, prefix="/v1")
 app.include_router(audit_logs_router, prefix="/v1")
