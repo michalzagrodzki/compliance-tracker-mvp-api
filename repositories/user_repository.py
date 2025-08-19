@@ -211,44 +211,6 @@ class UserRepository(SupabaseRepository[User]):
                 error_code="USER_LIST_FAILED"
             )
 
-    async def update_login_info(self, user_id: str) -> Optional[User]:
-        """Update user login information when they log in."""
-        try:
-            now = datetime.utcnow()
-            
-            # Get current user to increment login count
-            current_user = await self.get_by_id(user_id)
-            if not current_user:
-                raise ResourceNotFoundException(
-                    resource_type="User",
-                    resource_id=user_id
-                )
-            
-            # Update login info
-            update_dict = {
-                "last_login": now.isoformat(),
-                "login_count": current_user.login_count + 1,
-                "updated_at": now.isoformat()
-            }
-            
-            result = self.supabase.table(self.table_name)\
-                .update(update_dict)\
-                .eq("id", user_id)\
-                .execute()
-            
-            if not result.data:
-                logger.warning(f"Failed to update login info for user {user_id}")
-                return current_user
-            
-            updated_user = User.from_dict(result.data[0])
-            logger.debug(f"Updated login info for user: {updated_user.email}")
-            return updated_user
-            
-        except Exception as e:
-            logger.error(f"Failed to update login info for user {user_id}: {e}", exc_info=True)
-            # Don't raise exception for login info update failure
-            return await self.get_by_id(user_id)
-
     async def get_by_compliance_domain(self, domain: str) -> List[User]:
         """Get all users with access to a specific compliance domain."""
         try:

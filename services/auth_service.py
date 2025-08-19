@@ -138,14 +138,6 @@ class AuthService:
                     error_code="ACCOUNT_DEACTIVATED"
                 )
             
-            # Update login information
-            try:
-                await self.user_repository.update_login_info(user.id)
-                logger.debug(f"Updated login info for user {user.email}")
-            except Exception as e:
-                # Don't fail login if we can't update login info
-                logger.warning(f"Failed to update login info for {user.email}: {e}")
-            
             return TokenResponse(
                 access_token=auth_response.session.access_token,
                 refresh_token=auth_response.session.refresh_token,
