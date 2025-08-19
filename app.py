@@ -53,7 +53,6 @@ setup_middleware(app)
 
 configure_cors(app)
 
-
 @app.get("/", 
     summary="Root endpoint", 
     description="Simple health check and API info"
