@@ -1,7 +1,7 @@
 import logging
 import os
 from typing import Any, List, Dict, Optional
-from fastapi import APIRouter, Body, Query, Path, File, UploadFile, Form, Request, HTTPException
+from fastapi import APIRouter, Body, Query, Path, File, UploadFile, Form, HTTPException
 
 from auth.decorators import ValidatedUser, authorize
 from config.config import Settings

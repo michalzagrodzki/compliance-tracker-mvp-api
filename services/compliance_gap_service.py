@@ -2,7 +2,7 @@
 ComplianceGap service using Repository pattern.
 """
 
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from entities.compliance_gap import (
@@ -11,9 +11,6 @@ from entities.compliance_gap import (
     ComplianceGapUpdate, 
     ComplianceGapFilter,
     GapStatus,
-    RiskLevel,
-    BusinessImpact,
-    DetectionMethod
 )
 from repositories.compliance_gap_repository import ComplianceGapRepository
 from repositories.user_repository import UserRepository

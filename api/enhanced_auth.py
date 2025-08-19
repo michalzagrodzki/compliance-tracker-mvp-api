@@ -3,7 +3,7 @@ Enhanced authentication router with improved error handling.
 Example of how to use the new error handling system.
 """
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request
 from fastapi.security import HTTPAuthorizationCredentials
 
 from auth.decorators import ValidatedUser, authorize
@@ -11,9 +11,7 @@ from services.authentication import (
     auth_service,
     UserSignup,
     UserLogin,
-    TokenResponse,
     RefreshTokenRequest,
-    UserResponse,
     get_current_user,
 )
 from common.exceptions import (
@@ -23,7 +21,7 @@ from common.exceptions import (
     InvalidTokenException
 )
 from common.logging import get_logger, log_security_event, log_business_event
-from common.validation import RequestValidator, validate_request
+from common.validation import RequestValidator
 from common.responses import create_success_response
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])

@@ -25,8 +25,7 @@ def create_executive_summary(
 
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
-    
-    # Validate that compliance gaps match the audit session
+
     if req.audit_report.audit_session_id != req.compliance_gaps[0].audit_session_id if req.compliance_gaps else True:
         if req.compliance_gaps:
             mismatched_gaps = [
@@ -59,7 +58,6 @@ def create_executive_summary(
     end_time = time.time()
     response_time_ms = int((end_time - start_time) * 1000)
 
-    # Calculate gap statistics
     total_gaps = len(req.compliance_gaps)
     high_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == RiskLevel.HIGH])
     medium_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == RiskLevel.MEDIUM])

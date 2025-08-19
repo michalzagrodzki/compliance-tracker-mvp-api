@@ -5,8 +5,6 @@ Audit Log entity models and related classes.
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from pydantic import BaseModel, Field, validator
-import uuid
-
 
 class AuditLog(BaseModel):
     """

@@ -2,12 +2,12 @@
 Document service using Repository pattern.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 
 from entities.document import DocumentChunk, DocumentFilter
 from repositories.document_repository import DocumentRepository
 from common.exceptions import ValidationException
-from common.logging import get_logger, log_performance
+from common.logging import get_logger
 
 logger = get_logger("document_service")
 

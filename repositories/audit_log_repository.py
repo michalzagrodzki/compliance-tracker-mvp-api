@@ -14,7 +14,6 @@ from entities.audit_log import (
     AuditLogStatistics
 )
 from common.exceptions import (
-    ResourceNotFoundException,
     ValidationException,
     BusinessLogicException
 )

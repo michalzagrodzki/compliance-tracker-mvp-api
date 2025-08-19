@@ -16,7 +16,6 @@ from services.compliance_gaps import (
     get_gaps_by_audit_session,
     get_compliance_gaps_statistics,
 )
-# from services.compliance_gap_recommendation import generate_compliance_recommendation  # Old implementation
 from dependencies import get_compliance_recommendation_service, get_compliance_gap_repository
 from services.schemas import (
     ComplianceGapCreate,

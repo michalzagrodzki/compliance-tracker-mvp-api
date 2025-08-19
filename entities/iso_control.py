@@ -5,7 +5,6 @@ ISO Control entity models and related classes.
 from typing import Optional, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field, validator
-import uuid
 
 
 class ISOControl(BaseModel):

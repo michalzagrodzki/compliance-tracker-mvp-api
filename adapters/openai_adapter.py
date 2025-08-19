@@ -15,7 +15,7 @@ from common.exceptions import (
     ValidationException,
     BusinessLogicException
 )
-from common.logging import get_logger, log_performance, log_business_event
+from common.logging import get_logger, log_performance
 
 logger = get_logger("openai_adapter")
 

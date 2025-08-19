@@ -14,7 +14,6 @@ from common.exceptions import (
     ResourceNotFoundException,
     ValidationException,
     BusinessLogicException,
-    AuthorizationException,
 )
 from common.logging import get_logger, log_business_event, log_performance
 

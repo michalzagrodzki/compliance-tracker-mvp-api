@@ -2,7 +2,7 @@
 Audit Session repository implementation using Supabase.
 """
 
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Any
 from datetime import datetime, timezone
 import uuid
 

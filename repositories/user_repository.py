@@ -2,7 +2,7 @@
 User repository implementation using Supabase.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from datetime import datetime
 
 from repositories.base import SupabaseRepository

@@ -1,8 +1,3 @@
-"""
-Vector search adapter for document retrieval using similarity search.
-This handles all vector search operations for RAG functionality.
-"""
-
 import asyncio
 from typing import List, Optional, Dict, Any
 from abc import ABC, abstractmethod
@@ -12,8 +7,7 @@ import time
 
 from common.exceptions import (
     ExternalServiceException,
-    ValidationException,
-    BusinessLogicException
+    ValidationException
 )
 from common.logging import get_logger, log_performance
 

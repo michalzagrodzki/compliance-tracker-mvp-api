@@ -4,11 +4,9 @@ from fastapi import APIRouter, Query, Path, Request, HTTPException
 from auth.decorators import ValidatedUser, authorize
 from dependencies import AuditSessionServiceDep
 from entities.audit_session import (
-    AuditSession,
     AuditSessionCreate,
     AuditSessionUpdate,
     AuditSessionFilter,
-    AuditSessionStatistics
 )
 from services.schemas import (
     AuditSessionResponse,

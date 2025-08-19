@@ -5,7 +5,7 @@ ComplianceRecommendationService for generating AI-powered compliance recommendat
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-from entities.compliance_gap import ComplianceGap, RiskLevel, BusinessImpact, GapType
+from entities.compliance_gap import ComplianceGap, RiskLevel
 from repositories.compliance_gap_repository import ComplianceGapRepository
 from repositories.user_repository import UserRepository
 from services.ai_service import AIService

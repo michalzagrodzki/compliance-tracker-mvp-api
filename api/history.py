@@ -1,7 +1,7 @@
-from typing import Any, List, Dict, Optional
-from fastapi import APIRouter, Query, Path
+from typing import Any, Optional
+from fastapi import APIRouter, Query
 
-from auth.decorators import ValidatedUser, authorize
+from auth.decorators import authorize
 from dependencies import ChatHistoryServiceDep
 from services.schemas import ChatHistoryItem
 from entities.chat_history import ChatHistoryFilter

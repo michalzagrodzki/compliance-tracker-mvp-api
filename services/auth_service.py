@@ -2,7 +2,6 @@
 Refactored Authentication Service using Repository pattern.
 """
 
-import logging
 from typing import Optional
 from fastapi import HTTPException
 

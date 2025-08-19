@@ -2,11 +2,9 @@
 AI Service layer for business logic around AI operations.
 This layer handles caching, rate limiting, and business rules.
 """
-
-import asyncio
 import hashlib
 import json
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 from dataclasses import asdict
 
@@ -15,9 +13,8 @@ from common.exceptions import (
     ExternalServiceException,
     ValidationException,
     BusinessLogicException,
-    ResourceNotFoundException
 )
-from common.logging import get_logger, log_business_event, log_performance
+from common.logging import get_logger, log_business_event
 
 logger = get_logger("ai_service")
 

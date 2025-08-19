@@ -2,7 +2,7 @@
 Audit Log service using Repository pattern.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from datetime import datetime
 
 from entities.audit_log import (

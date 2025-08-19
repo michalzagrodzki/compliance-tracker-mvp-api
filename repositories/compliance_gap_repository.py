@@ -3,7 +3,7 @@ ComplianceGap repository implementation using Supabase.
 """
 
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 import uuid
 
 from repositories.base import SupabaseRepository
@@ -13,12 +13,9 @@ from entities.compliance_gap import (
     ComplianceGapUpdate, 
     ComplianceGapFilter,
     GapStatus,
-    RiskLevel,
-    BusinessImpact
 )
 from common.exceptions import (
     ResourceNotFoundException,
-    ValidationException,
     BusinessLogicException
 )
 from common.logging import get_logger
