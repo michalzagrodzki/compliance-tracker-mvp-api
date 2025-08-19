@@ -118,14 +118,17 @@ def create_new_compliance_gap(
 ) -> Dict[str, Any]:
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
-    
-    # This is a simplified version - the full logic from the original should be implemented
-    return create_compliance_gap(
-        gap_data=request_data,
-        user_id=current_user.id,
-        ip_address=ip_address,
-        user_agent=user_agent
-    )
+
+    # Normalize payload into a plain dict and enrich with context
+    payload = request_data.model_dump() if hasattr(request_data, "model_dump") else request_data.dict()
+    if current_user and getattr(current_user, "id", None):
+        payload["user_id"] = current_user.id
+    if ip_address:
+        payload["ip_address"] = ip_address
+    if user_agent:
+        payload["user_agent"] = user_agent
+
+    return create_compliance_gap(payload)
 
 
 @router.patch("/compliance-gaps/{gap_id}",
@@ -140,11 +143,8 @@ def update_existing_compliance_gap(
     gap_update: ComplianceGapUpdate,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    return update_compliance_gap(
-        gap_id=gap_id,
-        gap_data=gap_update,
-        user_id=current_user.id
-    )
+    update_data = gap_update.model_dump(exclude_unset=True) if hasattr(gap_update, "model_dump") else gap_update.dict(exclude_unset=True)
+    return update_compliance_gap(gap_id=gap_id, update_data=update_data)
 
 
 @router.put("/compliance-gaps/{gap_id}/status",
@@ -159,11 +159,7 @@ def update_compliance_gap_status(
     status_update: ComplianceGapStatusUpdate,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    return update_gap_status(
-        gap_id=gap_id,
-        status=status_update.status,
-        user_id=current_user.id
-    )
+    return update_gap_status(gap_id=gap_id, new_status=status_update.status, resolution_notes=status_update.resolution_notes)
 
 
 @router.put("/compliance-gaps/{gap_id}/assign",
@@ -178,11 +174,7 @@ def assign_compliance_gap(
     assigned_user_id: str = Body(..., embed=True),
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    return assign_gap_to_user(
-        gap_id=gap_id,
-        assigned_user_id=assigned_user_id,
-        assigner_user_id=current_user.id
-    )
+    return assign_gap_to_user(gap_id=gap_id, assigned_to=assigned_user_id)
 
 
 @router.put("/compliance-gaps/{gap_id}/review",
@@ -196,10 +188,7 @@ def review_compliance_gap(
     gap_id: str,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    return mark_gap_reviewed(
-        gap_id=gap_id,
-        reviewer_user_id=current_user.id
-    )
+    return mark_gap_reviewed(gap_id=gap_id)
 
 @router.get("/compliance-domains/{domain_code}/gaps",
     summary="Get compliance gaps by domain",
