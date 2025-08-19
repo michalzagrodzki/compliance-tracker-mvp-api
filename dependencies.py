@@ -24,6 +24,9 @@ from services.compliance_recommendation_service import ComplianceRecommendationS
 from services.iso_control_service import ISOControlService, create_iso_control_service
 from services.audit_log_service import AuditLogService, create_audit_log_service
 from adapters.openai_adapter import OpenAIAdapter, MockAIAdapter
+from adapters.embedding_adapter import BaseEmbeddingAdapter, OpenAIEmbeddingAdapter, MockEmbeddingAdapter
+from adapters.vector_search_adapter import BaseVectorSearchAdapter, SupabaseVectorSearchAdapter, MockVectorSearchAdapter
+from services.rag_service import RAGService, create_rag_service
 from config.config import settings
 
 
@@ -163,6 +166,47 @@ def get_compliance_recommendation_service() -> ComplianceRecommendationService:
     return create_compliance_recommendation_service(ai_service, gap_repo, user_repo)
 
 
+@lru_cache()
+def get_embedding_adapter() -> BaseEmbeddingAdapter:
+    """Get embedding adapter (OpenAI or Mock based on configuration)."""
+    openai_api_key = getattr(settings, 'openai_api_key', None)
+    
+    if openai_api_key:
+        return OpenAIEmbeddingAdapter(api_key=openai_api_key)
+    else:
+        return MockEmbeddingAdapter(delay_ms=100)
+
+
+@lru_cache()
+def get_vector_search_adapter() -> BaseVectorSearchAdapter:
+    """Get vector search adapter (Supabase or Mock based on configuration)."""
+    try:
+        supabase = get_supabase_client()
+        return SupabaseVectorSearchAdapter(supabase)
+    except Exception:
+        return MockVectorSearchAdapter(delay_ms=200)
+
+
+@lru_cache()
+def get_rag_service() -> RAGService:
+    """Get singleton RAGService with dependencies."""
+    embedding_adapter = get_embedding_adapter()
+    vector_search_adapter = get_vector_search_adapter()
+    llm_adapter = get_ai_adapter()
+    user_repo = get_user_repository()
+    chat_history_repo = get_chat_history_repository()
+    audit_log_repo = get_audit_log_repository()
+    
+    return create_rag_service(
+        embedding_adapter,
+        vector_search_adapter,
+        llm_adapter,
+        user_repo,
+        chat_history_repo,
+        audit_log_repo
+    )
+
+
 # Dependency annotations for FastAPI
 SupabaseClient = Annotated[object, Depends(get_supabase_client)]
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
@@ -181,3 +225,6 @@ ChatHistoryRepositoryDep = Annotated[ChatHistoryRepository, Depends(get_chat_his
 ChatHistoryServiceDep = Annotated[ChatHistoryService, Depends(get_chat_history_service)]
 AIServiceDep = Annotated[AIService, Depends(get_ai_service)]
 ComplianceRecommendationServiceDep = Annotated[ComplianceRecommendationService, Depends(get_compliance_recommendation_service)]
+EmbeddingAdapterDep = Annotated[BaseEmbeddingAdapter, Depends(get_embedding_adapter)]
+VectorSearchAdapterDep = Annotated[BaseVectorSearchAdapter, Depends(get_vector_search_adapter)]
+RAGServiceDep = Annotated[RAGService, Depends(get_rag_service)]
