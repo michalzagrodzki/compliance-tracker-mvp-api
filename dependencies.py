@@ -13,6 +13,7 @@ from repositories.chat_history_repository import ChatHistoryRepository
 from repositories.compliance_gap_repository import ComplianceGapRepository
 from repositories.document_repository import DocumentRepository
 from repositories.iso_control_repository import ISOControlRepository
+from repositories.audit_log_repository import AuditLogRepository
 from services.auth_service import AuthService, create_auth_service
 from services.compliance_gap_service import ComplianceGapService, create_compliance_gap_service
 from services.document_service import DocumentService, create_document_service
@@ -21,6 +22,7 @@ from services.chat_history_service import ChatHistoryService, create_chat_histor
 from services.ai_service import AIService, create_ai_service
 from services.compliance_recommendation_service import ComplianceRecommendationService, create_compliance_recommendation_service
 from services.iso_control_service import ISOControlService, create_iso_control_service
+from services.audit_log_service import AuditLogService, create_audit_log_service
 from adapters.openai_adapter import OpenAIAdapter, MockAIAdapter
 from config.config import settings
 
@@ -60,6 +62,13 @@ def get_iso_control_repository() -> ISOControlRepository:
 
 
 @lru_cache()
+def get_audit_log_repository() -> AuditLogRepository:
+    """Get singleton Audit Log repository."""
+    supabase = get_supabase_client()
+    return AuditLogRepository(supabase, settings.supabase_table_audit_log)
+
+
+@lru_cache()
 def get_auth_service() -> AuthService:
     """Get singleton AuthService with dependencies."""
     supabase = get_supabase_client()
@@ -87,6 +96,14 @@ def get_iso_control_service() -> ISOControlService:
     iso_control_repo = get_iso_control_repository()
     user_repo = get_user_repository()
     return create_iso_control_service(iso_control_repo, user_repo)
+
+
+@lru_cache()
+def get_audit_log_service() -> AuditLogService:
+    """Get singleton AuditLogService with dependencies."""
+    audit_log_repo = get_audit_log_repository()
+    user_repo = get_user_repository()
+    return create_audit_log_service(audit_log_repo, user_repo)
 
 
 @lru_cache()
@@ -156,6 +173,8 @@ DocumentRepositoryDep = Annotated[DocumentRepository, Depends(get_document_repos
 DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
 ISOControlRepositoryDep = Annotated[ISOControlRepository, Depends(get_iso_control_repository)]
 ISOControlServiceDep = Annotated[ISOControlService, Depends(get_iso_control_service)]
+AuditLogRepositoryDep = Annotated[AuditLogRepository, Depends(get_audit_log_repository)]
+AuditLogServiceDep = Annotated[AuditLogService, Depends(get_audit_log_service)]
 IngestionRepositoryDep = Annotated[PdfIngestionRepository, Depends(get_pdf_ingestion_repository)]
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 ChatHistoryRepositoryDep = Annotated[ChatHistoryRepository, Depends(get_chat_history_repository)]
