@@ -93,7 +93,7 @@ async def get_user_audit_sessions(
     """Get audit sessions for a specific user."""
     try:
         # For non-admin users, they can only see their own sessions
-        if not current_user.is_admin() and user_id != current_user.id:
+        if (getattr(current_user, "role", None) != "admin") and (user_id != current_user.id):
             raise HTTPException(status_code=403, detail="Access denied to user's audit sessions")
         
         # Create filters

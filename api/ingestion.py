@@ -321,7 +321,7 @@ def get_tag_constants_endpoint() -> Dict[str, Any]:
     }
 
 # Audit Session PDF Ingestion Management
-@router.post("/audit-sessions/{session_id}/pdf-ingestions",
+@router.post("/audit-sessions/{session_id}",
     summary="Add PDF ingestion to audit session",
     description="Associate a PDF ingestion with an audit session",
     response_model=Dict[str, Any],
@@ -363,7 +363,7 @@ def bulk_add_pdf_ingestions_to_audit_session(
     
     return AuditSessionPdfIngestionBulkResponse(**result)
 
-@router.get("/audit-sessions/{session_id}/pdf-ingestions",
+@router.get("/audit-sessions/{session_id}",
     summary="Get PDF ingestions for audit session",
     description="Get all PDF ingestions associated with an audit session",
     response_model=List[PdfIngestionWithRelationship]
