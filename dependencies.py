@@ -12,6 +12,7 @@ from repositories.pdf_ingestion_repository import PdfIngestionRepository
 from repositories.chat_history_repository import ChatHistoryRepository
 from repositories.compliance_gap_repository import ComplianceGapRepository
 from repositories.document_repository import DocumentRepository
+from repositories.iso_control_repository import ISOControlRepository
 from services.auth_service import AuthService, create_auth_service
 from services.compliance_gap_service import ComplianceGapService, create_compliance_gap_service
 from services.document_service import DocumentService, create_document_service
@@ -19,6 +20,7 @@ from services.ingestion_service import IngestionService, create_ingestion_servic
 from services.chat_history_service import ChatHistoryService, create_chat_history_service
 from services.ai_service import AIService, create_ai_service
 from services.compliance_recommendation_service import ComplianceRecommendationService, create_compliance_recommendation_service
+from services.iso_control_service import ISOControlService, create_iso_control_service
 from adapters.openai_adapter import OpenAIAdapter, MockAIAdapter
 from config.config import settings
 
@@ -51,6 +53,13 @@ def get_document_repository() -> DocumentRepository:
 
 
 @lru_cache()
+def get_iso_control_repository() -> ISOControlRepository:
+    """Get singleton ISO Control repository."""
+    supabase = get_supabase_client()
+    return ISOControlRepository(supabase, settings.supabase_table_iso_controls)
+
+
+@lru_cache()
 def get_auth_service() -> AuthService:
     """Get singleton AuthService with dependencies."""
     supabase = get_supabase_client()
@@ -70,6 +79,14 @@ def get_compliance_gap_service() -> ComplianceGapService:
 def get_document_service() -> DocumentService:
     repo = get_document_repository()
     return create_document_service(repo)
+
+
+@lru_cache()
+def get_iso_control_service() -> ISOControlService:
+    """Get singleton ISOControlService with dependencies."""
+    iso_control_repo = get_iso_control_repository()
+    user_repo = get_user_repository()
+    return create_iso_control_service(iso_control_repo, user_repo)
 
 
 @lru_cache()
@@ -137,6 +154,8 @@ AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 ComplianceGapServiceDep = Annotated[ComplianceGapService, Depends(get_compliance_gap_service)]
 DocumentRepositoryDep = Annotated[DocumentRepository, Depends(get_document_repository)]
 DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
+ISOControlRepositoryDep = Annotated[ISOControlRepository, Depends(get_iso_control_repository)]
+ISOControlServiceDep = Annotated[ISOControlService, Depends(get_iso_control_service)]
 IngestionRepositoryDep = Annotated[PdfIngestionRepository, Depends(get_pdf_ingestion_repository)]
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 ChatHistoryRepositoryDep = Annotated[ChatHistoryRepository, Depends(get_chat_history_repository)]
