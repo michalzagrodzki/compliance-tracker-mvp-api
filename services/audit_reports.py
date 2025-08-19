@@ -17,6 +17,176 @@ from services.schemas import AuditReportResponse, AuditReportUpdate, AuditReport
 logger = logging.getLogger(__name__)
 supabase = create_supabase_client()
 
+# NOTE: Gradual migration
+# Below, we provide wrapper overrides that delegate legacy functions
+# to the new Repository/Service implementations.
+try:
+    import asyncio
+    from repositories.audit_report_repository import AuditReportRepository
+    from dependencies import get_audit_report_service
+except Exception:
+    # Allow module import even if repository/service not available at import-time
+    AuditReportRepository = None
+    get_audit_report_service = None
+
+def _get_repo_for_migration() -> Optional["AuditReportRepository"]:
+    if AuditReportRepository is None:
+        return None
+    return AuditReportRepository(supabase, settings.supabase_table_audit_reports)
+
+# --- Migration overrides (placed after original defs to take precedence) ---
+
+def list_audit_reports(
+    skip: int = 0,
+    limit: int = 10,
+    compliance_domain: Optional[str] = None,
+    report_type: Optional[str] = None,
+    report_status: Optional[str] = None,
+    user_id: Optional[str] = None,
+    audit_session_id: Optional[str] = None,
+    target_audience: Optional[str] = None,
+    confidentiality_level: Optional[str] = None,
+    generated_after: Optional[datetime] = None,
+    generated_before: Optional[datetime] = None
+) -> List[Dict[str, Any]]:
+    repo = _get_repo_for_migration()
+    if not repo:
+        # Fallback to existing behavior above if repo unavailable
+        return []
+    filters: Dict[str, Any] = {}
+    if compliance_domain:
+        filters["compliance_domain"] = compliance_domain
+    if report_type:
+        filters["report_type"] = report_type
+    if report_status:
+        filters["report_status"] = report_status
+    if user_id:
+        filters["user_id"] = user_id
+    if audit_session_id:
+        filters["audit_session_id"] = audit_session_id
+    if target_audience:
+        filters["target_audience"] = target_audience
+    if confidentiality_level:
+        filters["confidentiality_level"] = confidentiality_level
+    if generated_after:
+        filters["generated_after"] = generated_after
+    if generated_before:
+        filters["generated_before"] = generated_before
+    return asyncio.run(repo.list(skip=skip, limit=limit, filters=filters, order_by="-report_generated_at"))
+
+
+def list_audit_reports_by_compliance_domains(compliance_domains: List[str]) -> List[Dict[str, Any]]:
+    repo = _get_repo_for_migration()
+    if not repo:
+        return []
+    return asyncio.run(repo.get_by_domains(compliance_domains))
+
+
+def list_audit_reports_by_compliance_domain(compliance_domain: str) -> List[Dict[str, Any]]:
+    repo = _get_repo_for_migration()
+    if not repo:
+        return []
+    return asyncio.run(repo.get_by_domain(compliance_domain))
+
+
+def get_audit_report_by_id(report_id: str) -> Dict[str, Any]:
+    repo = _get_repo_for_migration()
+    if not repo:
+        return {}
+    data = asyncio.run(repo.get_by_id(report_id))
+    if not data:
+        raise HTTPException(status_code=404, detail=f"Audit report with ID '{report_id}' not found")
+    return data
+
+
+def delete_audit_report(report_id: str, soft_delete: bool = True) -> Dict[str, Any]:
+    repo = _get_repo_for_migration()
+    if not repo:
+        return {"success": False}
+    success = asyncio.run(repo.delete(report_id, soft_delete=soft_delete))
+    return {"success": success, "soft_delete": soft_delete}
+
+
+def create_audit_report(report_data: Dict[str, Any]) -> Dict[str, Any]:
+    repo = _get_repo_for_migration()
+    if not repo:
+        return {}
+    return asyncio.run(repo.create(report_data))
+
+
+def update_audit_report(
+    report_id: str,
+    update_data: Dict[str, Any],
+    user_id: Optional[str] = None,
+    create_version: bool = False,
+    change_description: Optional[str] = None,
+    change_type: str = "draft_update",
+) -> Dict[str, Any]:
+    repo = _get_repo_for_migration()
+    if not repo:
+        return {}
+    # Maintain minimal processing for timestamps and audit trail
+    now_iso = datetime.now(timezone.utc).isoformat()
+    processed: Dict[str, Any] = {k: v for k, v in (update_data or {}).items() if v is not None}
+    processed.setdefault("updated_at", now_iso)
+    processed.setdefault("last_modified_at", now_iso)
+    if processed.get("report_status") == "finalized" and "report_finalized_at" not in processed:
+        processed["report_finalized_at"] = now_iso
+    updated = asyncio.run(repo.update(report_id, processed))
+    if create_version and updated:
+        try:
+            _create_report_version(
+                report_id=report_id,
+                current_data=updated,
+                user_id=user_id,
+                change_description=change_description or "Report updated",
+                change_type=change_type,
+            )
+        except Exception:
+            logger.warning("Failed to create report version during legacy update")
+    return updated
+
+
+def get_audit_report_statistics(
+    compliance_domain: Optional[str] = None,
+    user_id: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    repo = _get_repo_for_migration()
+    if not repo:
+        return {}
+    return asyncio.run(
+        repo.get_statistics(
+            compliance_domain=compliance_domain,
+            user_id=user_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    )
+
+
+def generate_audit_report_from_session(
+    audit_session_id: str,
+    user_id: str,
+    report_title: str,
+    report_type: str = "compliance_audit",
+    **generation_options,
+) -> Dict[str, Any]:
+    # Delegate to the new service to avoid duplicating complex logic
+    if not get_audit_report_service:
+        raise HTTPException(status_code=500, detail="AuditReportService unavailable")
+    service = get_audit_report_service()
+    return asyncio.run(
+        service.generate_report_from_session(
+            audit_session_id=audit_session_id,
+            user_id=user_id,
+            report_title=report_title,
+            report_type=report_type,
+            **generation_options,
+        )
+    )
+
 def list_audit_reports(
     skip: int = 0,
     limit: int = 10,

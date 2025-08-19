@@ -5,17 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Path, Body, Request, Query,
 
 from auth.decorators import ValidatedUser, authorize
 from services.audit_log import create_audit_log
-from services.audit_reports import (
-    generate_audit_report_from_session,
-    list_audit_reports,
-    list_audit_reports_by_compliance_domains,
-    list_audit_reports_by_compliance_domain,
-    get_audit_report_by_id,
-    create_audit_report,
-    update_audit_report,
-    delete_audit_report,
-    get_audit_report_statistics,
-)
+from dependencies import AuditReportServiceDep
 from services.audit_report_versions import (
     compare_audit_report_versions,
     create_audit_report_version,
@@ -51,7 +41,7 @@ router = APIRouter(prefix="/audit-reports", tags=["Audit Reports"])
     response_model=List[Dict[str, Any]]
 )
 @authorize(allowed_roles=["admin"], check_active=True)
-def get_all_audit_reports(
+async def get_all_audit_reports(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
@@ -63,14 +53,17 @@ def get_all_audit_reports(
     confidentiality_level: Optional[str] = Query(None, description="Filter by confidentiality level"),
     generated_after: Optional[datetime] = Query(None, description="Filter by generation date (after)"),
     generated_before: Optional[datetime] = Query(None, description="Filter by generation date (before)"),
+    audit_report_service: AuditReportServiceDep = None,
+    current_user: ValidatedUser = None
 ) -> List[Dict[str, Any]]:
-    return list_audit_reports(
+    return await audit_report_service.list_reports(
+        user_id=current_user.id,
         skip=skip,
         limit=limit,
         compliance_domain=compliance_domain,
         report_type=report_type,
         report_status=report_status,
-        user_id=user_id,
+        creator_user_id=user_id,
         audit_session_id=audit_session_id,
         target_audience=target_audience,
         confidentiality_level=confidentiality_level,
@@ -84,7 +77,8 @@ def get_all_audit_reports(
     response_model=List[Dict[str, Any]]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_all_audit_reports(
+async def get_all_audit_reports(
+    audit_report_service: AuditReportServiceDep = None,
     current_user: ValidatedUser = None
 ) -> List[Dict[str, Any]]:
     user_compliance_domains = getattr(current_user, 'compliance_domains', [])
@@ -107,7 +101,7 @@ def get_all_audit_reports(
         user_agent=None
     )
 
-    return list_audit_reports_by_compliance_domains(user_compliance_domains)
+    return await audit_report_service.list_reports_by_domains(current_user.id, user_compliance_domains)
 
 @router.get("/compliance-domain/{compliance_domain_code}",
     summary="List audit reports by compliance domain",
@@ -115,10 +109,12 @@ def get_all_audit_reports(
     response_model=List[Dict[str, Any]]
 )
 @authorize(allowed_roles=["admin"], check_active=True)
-def get_all_audit_reports(
+async def get_all_audit_reports(
     compliance_domain_code: str = Path(..., description="compliance_domain_code"),
+    audit_report_service: AuditReportServiceDep = None,
+    current_user: ValidatedUser = None
 ) -> List[Dict[str, Any]]:
-    return list_audit_reports_by_compliance_domain(compliance_domain_code)
+    return await audit_report_service.list_reports_by_domain(current_user.id, compliance_domain_code)
 
 @router.get("/{report_id}",
     summary="Get audit report by ID",
@@ -126,10 +122,12 @@ def get_all_audit_reports(
     response_model=Dict[str, Any]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_audit_report(
+async def get_audit_report(
     report_id: str = Path(..., description="Audit report UUID"),
+    audit_report_service: AuditReportServiceDep = None,
+    current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    return get_audit_report_by_id(report_id)
+    return await audit_report_service.get_report_by_id(report_id, current_user.id)
 
 @router.post("",
     summary="Create new audit report",
@@ -138,8 +136,9 @@ def get_audit_report(
     status_code=201
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def create_new_audit_report(
+async def create_new_audit_report(
     report_data: AuditReportCreate = Body(..., description="Audit report data"),
+    audit_report_service: AuditReportServiceDep = None,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
     try:
@@ -157,7 +156,7 @@ def create_new_audit_report(
                 report_dict[field] = [str(uuid_val) for uuid_val in report_dict[field]]
 
         try:
-            created_report = create_audit_report(report_dict)
+            created_report = await audit_report_service.create_report(report_dict, str(current_user.id))
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -209,8 +208,9 @@ def create_new_audit_report(
     response_model=Dict[str, Any]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def generate_audit_report(
+async def generate_audit_report(
     generate_request: AuditReportGenerateRequest = Body(..., description="Report generation parameters"),
+    audit_report_service: AuditReportServiceDep = None,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
     generation_options = {
@@ -221,7 +221,7 @@ def generate_audit_report(
         "confidentiality_level": generate_request.confidentiality_level
     }
     
-    report = generate_audit_report_from_session(
+    report = await audit_report_service.generate_report_from_session(
         audit_session_id=str(generate_request.audit_session_id),
         user_id=str(current_user.id),
         report_title=generate_request.report_title,
@@ -249,15 +249,16 @@ def generate_audit_report(
     response_model=Dict[str, Any]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def update_existing_audit_report(
+async def update_existing_audit_report(
     report_id: str = Path(..., description="Audit report UUID"),
     update_data: AuditReportUpdate = Body(..., description="Fields to update"),
     change_description: str = Body(..., description="Description of changes made", embed=True),
+    audit_report_service: AuditReportServiceDep = None,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
     update_dict = update_data.model_dump(exclude_unset=True)
 
-    updated_report = update_audit_report(report_id, update_dict)
+    updated_report = await audit_report_service.update_report(report_id, update_dict, str(current_user.id))
 
     if update_dict:
         create_audit_report_version(
@@ -276,9 +277,10 @@ def update_existing_audit_report(
     response_model=Dict[str, Any]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def update_audit_report_status(
+async def update_audit_report_status(
     report_id: str = Path(..., description="Audit report UUID"),
     status_update: AuditReportStatusUpdate = Body(..., description="New status data"),
+    audit_report_service: AuditReportServiceDep = None,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
     update_data = {"report_status": status_update.new_status}
@@ -288,7 +290,7 @@ def update_audit_report_status(
     elif status_update.new_status == "finalized":
         update_data["report_finalized_at"] = datetime.now(timezone.utc).isoformat()
     
-    updated_report = update_audit_report(report_id, update_data)
+    updated_report = await audit_report_service.update_report(report_id, update_data, str(current_user.id))
 
     create_audit_report_version(
         audit_report_id=report_id,
@@ -306,11 +308,14 @@ def update_audit_report_status(
     response_model=Dict[str, Any]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def delete_existing_audit_report(
+async def delete_existing_audit_report(
     report_id: str = Path(..., description="Audit report UUID"),
     hard_delete: bool = Query(False, description="If true, permanently delete (not recommended)"),
+    audit_report_service: AuditReportServiceDep = None,
+    current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    return delete_audit_report(report_id, soft_delete=not hard_delete)
+    success = await audit_report_service.delete_report(report_id, user_id=str(current_user.id), soft_delete=not hard_delete)
+    return {"success": success}
 
 @router.post("/search",
     summary="Search audit reports",
@@ -318,17 +323,19 @@ def delete_existing_audit_report(
     response_model=List[Dict[str, Any]]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def search_audit_reports_endpoint(
+async def search_audit_reports_endpoint(
     search_request: AuditReportSearchRequest,
+    audit_report_service: AuditReportServiceDep = None,
     current_user: ValidatedUser = None
 ) -> List[Dict[str, Any]]:
-    return list_audit_reports(
+    return await audit_report_service.list_reports(
+        user_id=current_user.id,
         skip=search_request.skip,
         limit=search_request.limit,
         compliance_domain=search_request.compliance_domain,
         report_type=search_request.report_type,
         report_status=search_request.report_status,
-        user_id=str(search_request.user_id) if search_request.user_id else None,
+        creator_user_id=str(search_request.user_id) if search_request.user_id else None,
         audit_session_id=str(search_request.audit_session_id) if search_request.audit_session_id else None,
         target_audience=search_request.target_audience,
         confidentiality_level=search_request.confidentiality_level,
@@ -342,15 +349,18 @@ def search_audit_reports_endpoint(
     response_model=Dict[str, Any]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_audit_report_statistics_endpoint(
+async def get_audit_report_statistics_endpoint(
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
     start_date: Optional[datetime] = Query(None, description="Filter reports generated after this date"),
     end_date: Optional[datetime] = Query(None, description="Filter reports generated before this date"),
+    audit_report_service: AuditReportServiceDep = None,
+    current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    return get_audit_report_statistics(
+    return await audit_report_service.get_statistics(
+        user_id=current_user.id,
         compliance_domain=compliance_domain,
-        user_id=user_id,
+        target_user_id=user_id,
         start_date=start_date,
         end_date=end_date
     )

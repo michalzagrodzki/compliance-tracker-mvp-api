@@ -15,6 +15,7 @@ from repositories.document_repository import DocumentRepository
 from repositories.iso_control_repository import ISOControlRepository
 from repositories.audit_log_repository import AuditLogRepository
 from repositories.audit_session_repository import AuditSessionRepository
+from repositories.audit_report_repository import AuditReportRepository
 from services.auth_service import AuthService, create_auth_service
 from services.compliance_gap_service import ComplianceGapService, create_compliance_gap_service
 from services.document_service import DocumentService, create_document_service
@@ -25,6 +26,7 @@ from services.compliance_recommendation_service import ComplianceRecommendationS
 from services.iso_control_service import ISOControlService, create_iso_control_service
 from services.audit_log_service import AuditLogService, create_audit_log_service
 from services.audit_session_service import AuditSessionService, create_audit_session_service
+from services.audit_report_service import AuditReportService, create_audit_report_service
 from adapters.openai_adapter import OpenAIAdapter, MockAIAdapter
 from adapters.embedding_adapter import BaseEmbeddingAdapter, OpenAIEmbeddingAdapter, MockEmbeddingAdapter
 from adapters.vector_search_adapter import BaseVectorSearchAdapter, SupabaseVectorSearchAdapter, MockVectorSearchAdapter
@@ -81,6 +83,13 @@ def get_audit_session_repository() -> AuditSessionRepository:
 
 
 @lru_cache()
+def get_audit_report_repository() -> AuditReportRepository:
+    """Get singleton Audit Report repository."""
+    supabase = get_supabase_client()
+    return AuditReportRepository(supabase, settings.supabase_table_audit_reports)
+
+
+@lru_cache()
 def get_auth_service() -> AuthService:
     """Get singleton AuthService with dependencies."""
     supabase = get_supabase_client()
@@ -124,6 +133,23 @@ def get_audit_session_service() -> AuditSessionService:
     audit_session_repo = get_audit_session_repository()
     user_repo = get_user_repository()
     return create_audit_session_service(audit_session_repo, user_repo)
+
+
+@lru_cache()
+def get_audit_report_service() -> AuditReportService:
+    """Get singleton AuditReportService with dependencies."""
+    audit_report_repo = get_audit_report_repository()
+    user_repo = get_user_repository()
+    chat_history_repo = get_chat_history_repository()
+    compliance_gap_repo = get_compliance_gap_repository()
+    audit_session_repo = get_audit_session_repository()
+    return create_audit_report_service(
+        audit_report_repo,
+        user_repo,
+        chat_history_repo,
+        compliance_gap_repo,
+        audit_session_repo,
+    )
 
 
 @lru_cache()
@@ -238,6 +264,8 @@ AuditLogRepositoryDep = Annotated[AuditLogRepository, Depends(get_audit_log_repo
 AuditLogServiceDep = Annotated[AuditLogService, Depends(get_audit_log_service)]
 AuditSessionRepositoryDep = Annotated[AuditSessionRepository, Depends(get_audit_session_repository)]
 AuditSessionServiceDep = Annotated[AuditSessionService, Depends(get_audit_session_service)]
+AuditReportRepositoryDep = Annotated[AuditReportRepository, Depends(get_audit_report_repository)]
+AuditReportServiceDep = Annotated[AuditReportService, Depends(get_audit_report_service)]
 IngestionRepositoryDep = Annotated[PdfIngestionRepository, Depends(get_pdf_ingestion_repository)]
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 ChatHistoryRepositoryDep = Annotated[ChatHistoryRepository, Depends(get_chat_history_repository)]
