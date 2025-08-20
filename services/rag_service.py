@@ -13,6 +13,7 @@ from adapters.vector_search_adapter import BaseVectorSearchAdapter, VectorSearch
 from adapters.openai_adapter import BaseAIAdapter, AIRequest
 from repositories.user_repository import UserRepository
 from repositories.chat_history_repository import ChatHistoryRepository
+from entities.chat_history import ChatHistoryCreate
 from repositories.audit_log_repository import AuditLogRepository
 from entities.audit_log import AuditLogCreate
 from common.exceptions import (
@@ -421,88 +422,109 @@ class RAGService:
         embedding_response,
         llm_response
     ) -> Dict[str, Any]:
-        """Build aggregated metadata from the RAG pipeline."""
-        
+        """Build aggregated metadata matching the required structure."""
         # Collect metadata from source documents
-        source_filenames = set()
-        source_domains = set()
-        source_versions = set()
-        all_tags = set()
-        authors = set()
-        titles = set()
-        
+        source_filenames: set[str] = set()
+        source_domains: set[str] = set()
+        source_versions: set[str] = set()
+        all_tags: set[str] = set()
+
         total_similarity_score = 0.0
         best_match_score = 0.0
-        document_details = []
-        
+        min_similarity = None
+        max_similarity = None
+        document_details: List[Dict[str, Any]] = []
+
         for match in matches:
-            metadata = match.metadata or {}
-            
-            if metadata.get("source_filename"):
-                source_filenames.add(metadata["source_filename"])
-            if metadata.get("compliance_domain"):
-                source_domains.add(metadata["compliance_domain"])
-            if metadata.get("document_version"):
-                source_versions.add(metadata["document_version"])
-            if metadata.get("document_tags"):
-                all_tags.update(metadata["document_tags"])
-            if metadata.get("author"):
-                authors.add(metadata["author"])
-            if metadata.get("title"):
-                titles.add(metadata["title"])
-            
-            similarity = match.similarity
-            total_similarity_score += similarity
-            best_match_score = max(best_match_score, similarity)
-            
+            md = match.metadata or {}
+
+            if md.get("source_filename"):
+                source_filenames.add(md["source_filename"])
+            if md.get("compliance_domain"):
+                source_domains.add(md["compliance_domain"])
+            if md.get("document_version"):
+                source_versions.add(md["document_version"])
+            if md.get("document_tags"):
+                try:
+                    all_tags.update(list(md["document_tags"]))
+                except Exception:
+                    pass
+
+            sim = float(getattr(match, "similarity", 0.0) or 0.0)
+            total_similarity_score += sim
+            best_match_score = sim if sim > best_match_score else best_match_score
+            min_similarity = sim if (min_similarity is None or sim < min_similarity) else min_similarity
+            max_similarity = sim if (max_similarity is None or sim > max_similarity) else max_similarity
+
             document_details.append({
-                "id": match.id,
-                "source_filename": metadata.get("source_filename"),
-                "compliance_domain": metadata.get("compliance_domain"),
-                "document_version": metadata.get("document_version"),
-                "similarity": similarity,
-                "chunk_index": metadata.get("chunk_index", 0)
+                "title": md.get("title"),
+                "author": md.get("author"),
+                "similarity": sim,
+                "chunk_index": md.get("chunk_index"),
+                "document_id": str(match.id),
+                "document_tags": md.get("document_tags", []) or [],
+                "source_filename": md.get("source_filename"),
+                "document_version": md.get("document_version"),
+                "compliance_domain": md.get("compliance_domain"),
+                "source_page_number": md.get("source_page_number"),
             })
-        
-        avg_similarity = total_similarity_score / len(matches) if matches else 0.0
-        
+
+        count = len(matches)
+        avg_similarity = (total_similarity_score / count) if count else 0.0
+
+        # Derive summaries
+        tags_lower = {t.lower() for t in all_tags}
+        regulatory_tags = [t for t in all_tags if any(k in t.lower() for k in ["iso", "gdpr", "sox", "hipaa", "pci"])]
+        document_types = [t for t in all_tags if any(k in t.lower() for k in ["policy", "procedure", "standard", "guideline"])]
+
         return {
-            "query_metadata": {
-                "requested_compliance_domain": compliance_domain,
-                "requested_document_version": document_version,
-                "requested_document_tags": document_tags or [],
-                "sources_analyzed": len(matches),
-                "embedding_model": getattr(embedding_response, 'model_used', None),
-                "llm_model": getattr(llm_response, 'model_used', None) if llm_response else None
-            },
-            "document_coverage": {
-                "unique_source_files": list(source_filenames),
-                "unique_compliance_domains": list(source_domains),
-                "unique_document_versions": list(source_versions),
-                "all_document_tags": list(all_tags),
-                "unique_authors": list(authors),
-                "unique_titles": list(titles),
-                "total_sources": len(matches)
-            },
-            "similarity_metrics": {
-                "best_match_score": round(best_match_score, 4),
-                "average_similarity": round(avg_similarity, 4),
-                "total_similarity": round(total_similarity_score, 4)
-            },
+            "queried_tags": document_tags if document_tags else None,
+            "queried_domain": compliance_domain,
+            "source_domains": list(source_domains),
+            "queried_version": document_version,
+            "source_versions": list(source_versions),
+            "best_match_score": best_match_score,
             "document_details": document_details,
-            "performance_metrics": {
-                "embedding_tokens": getattr(embedding_response, 'token_count', None),
-                "embedding_time_ms": getattr(embedding_response, 'response_time_ms', None),
-                "llm_tokens": getattr(llm_response, 'tokens_used', None) if llm_response else None,
-                "llm_time_ms": getattr(llm_response, 'response_time_ms', None) if llm_response else None
-            }
+            "similarity_range": {
+                "min": (min_similarity if min_similarity is not None else 0.0),
+                "max": (max_similarity if max_similarity is not None else 0.0),
+            },
+            "source_filenames": list(source_filenames),
+            "all_document_tags": list(all_tags),
+            "average_similarity": round(avg_similarity, 4),
+            "compliance_summary": {
+                "document_types": document_types,
+                "domains_covered": list(source_domains),
+                "regulatory_tags": regulatory_tags,
+                "versions_referenced": list(source_versions),
+            },
+            "total_documents_retrieved": count,
         }
 
     async def _log_chat_history(self, **kwargs):
-        """Log chat history entry."""
-        # Implementation depends on chat history repository structure
-        # This is a placeholder that would need to be implemented based on your specific requirements
-        logger.debug(f"Logging chat history: {kwargs}")
+        """Persist chat history using repository."""
+        if not self.chat_history_repository:
+            return
+        try:
+            # Build create model; tolerate extra fields in kwargs
+            create = ChatHistoryCreate(**{
+                "conversation_id": kwargs.get("conversation_id"),
+                "question": kwargs.get("question"),
+                "answer": kwargs.get("answer"),
+                "audit_session_id": kwargs.get("audit_session_id"),
+                "compliance_domain": kwargs.get("compliance_domain"),
+                "source_document_ids": kwargs.get("source_document_ids", []) or [],
+                "match_threshold": kwargs.get("match_threshold"),
+                "match_count": kwargs.get("match_count"),
+                "user_id": kwargs.get("user_id"),
+                "response_time_ms": kwargs.get("response_time_ms"),
+                "total_tokens_used": kwargs.get("total_tokens_used"),
+                "metadata": kwargs.get("metadata", {}) or {},
+            })
+            item = await self.chat_history_repository.create(create)
+            logger.info(f"Chat history saved: conversation={item.conversation_id} id={item.id}")
+        except Exception as e:
+            logger.warning(f"Failed to persist chat history: {e}")
 
     async def _log_document_access(
         self,
