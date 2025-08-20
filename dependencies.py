@@ -29,7 +29,7 @@ from services.audit_session_service import AuditSessionService, create_audit_ses
 from services.audit_report_service import AuditReportService, create_audit_report_service
 from adapters.openai_adapter import OpenAIAdapter, MockAIAdapter
 from adapters.embedding_adapter import BaseEmbeddingAdapter, OpenAIEmbeddingAdapter, MockEmbeddingAdapter
-from adapters.vector_search_adapter import BaseVectorSearchAdapter, SupabaseVectorSearchAdapter, MockVectorSearchAdapter
+from adapters.vector_search_adapter import BaseVectorSearchAdapter, SupabaseVectorSearchAdapter
 from services.rag_service import RAGService, create_rag_service
 from config.config import settings
 
@@ -227,7 +227,7 @@ def get_vector_search_adapter() -> BaseVectorSearchAdapter:
         supabase = get_supabase_client()
         return SupabaseVectorSearchAdapter(supabase)
     except Exception:
-        return MockVectorSearchAdapter(delay_ms=200)
+        return
 
 
 @lru_cache()

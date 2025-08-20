@@ -58,7 +58,7 @@ class QueryRequest(BaseModel):
     match_threshold: Optional[float] = Field(0.75, description="Similarity match threshold", ge=0.0, le=1.0)
     match_count: Optional[int] = Field(5, description="Maximum number of documents to retrieve", ge=1, le=20)
     user_id: Optional[str] = Field(None, description="User ID for audit tracking")
-    document_version: Optional[str] = Field(None, description="Query document version")
+    document_versions: Optional[List[str]] = Field(None, description="Query document version")
     document_tags: Optional[List[str]] = Field(None, description="Query document tags")
 
 class SourceDoc(BaseModel):

@@ -2,7 +2,7 @@ import time
 import uuid
 import logging
 import json
-from typing import AsyncGenerator, Dict, Any, Union
+from typing import Dict, Any, Union, Iterator
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -66,7 +66,7 @@ async def query_qa(
             match_threshold=validated_req.match_threshold,
             match_count=validated_req.match_count,
             compliance_domain=compliance_domain,
-            document_version=getattr(req, 'document_version', None),
+            document_versions=getattr(req, 'document_versions', None),
             document_tags=getattr(req, 'document_tags', None),
             conversation_id=conversation_id,
             audit_session_id=req.audit_session_id,
@@ -162,9 +162,9 @@ async def query_stream(
             compliance_domain=compliance_domain
         )
 
-        async def event_generator() -> AsyncGenerator[Union[str, Dict[str, Any]], None]:
+        def event_generator() -> Iterator[Union[str, Dict[str, Any]]]:
             try:
-                async for token_data in rag_service.stream_answer(
+                for token_data in rag_service.stream_answer(
                     question=req.question,
                     user_id=current_user.id,
                     conversation_id=conversation_id,
@@ -172,7 +172,7 @@ async def query_stream(
                     match_threshold=getattr(req, 'match_threshold', 0.75),
                     match_count=getattr(req, 'match_count', 5),
                     compliance_domain=compliance_domain,
-                    document_version=getattr(req, 'document_version', None),
+                    document_versions=getattr(req, 'document_versions', None),
                     document_tags=getattr(req, 'document_tags', None),
                     audit_session_id=req.audit_session_id,
                     ip_address=ip_address,

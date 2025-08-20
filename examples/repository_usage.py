@@ -175,11 +175,7 @@ def show_entity_features():
     print(f"   Is admin: {user.is_admin()}")
     print(f"   Is compliance officer: {user.is_compliance_officer()}")
     print(f"   Can access admin endpoints: {user.has_role_access(['admin'])}")
-    
-    print("\n4. Updating user state:")
-    user.update_login_info()
-    print(f"   Login count after update: {user.login_count}")
-    print(f"   Last login updated: {user.last_login is not None}")
+
     
     user.add_compliance_domain("SOC2")
     print(f"   Domains after adding SOC2: {user.compliance_domains}")

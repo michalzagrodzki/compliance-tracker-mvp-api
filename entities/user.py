@@ -69,12 +69,6 @@ class User(BaseModel):
         """Check if user can access a specific compliance domain."""
         return domain in self.compliance_domains
 
-    def update_login_info(self) -> None:
-        """Update login information when user logs in."""
-        self.last_login = datetime.utcnow()
-        self.login_count += 1
-        self.updated_at = datetime.utcnow()
-
     def activate(self) -> None:
         """Activate the user account."""
         self.is_active = True

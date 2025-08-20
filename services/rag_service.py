@@ -5,7 +5,7 @@ Orchestrates the complete RAG pipeline: embedding, retrieval, and generation.
 
 import asyncio
 import uuid
-from typing import Optional, List, Dict, Any, Tuple, AsyncGenerator, Union
+from typing import Optional, List, Dict, Any, Tuple, AsyncGenerator, Union, Iterator
 from datetime import datetime
 
 from adapters.embedding_adapter import BaseEmbeddingAdapter, EmbeddingRequest
@@ -56,7 +56,7 @@ class RAGService:
         match_threshold: float = 0.75,
         match_count: int = 5,
         compliance_domain: Optional[str] = None,
-        document_version: Optional[str] = None,
+        document_versions: Optional[List[str]] = None,
         document_tags: Optional[List[str]] = None,
         conversation_id: Optional[str] = None,
         audit_session_id: Optional[str] = None,
@@ -98,7 +98,7 @@ class RAGService:
                 match_count=match_count,
                 compliance_domain=compliance_domain,
                 user_domains=user.compliance_domains if not user.is_admin() else None,
-                document_version=document_version,
+                document_versions=document_versions,
                 document_tags=document_tags
             )
             
@@ -138,7 +138,7 @@ class RAGService:
             metadata = self._build_query_metadata(
                 search_response.matches, 
                 compliance_domain, 
-                document_version, 
+                document_versions, 
                 document_tags,
                 embedding_response,
                 llm_response
@@ -224,7 +224,7 @@ class RAGService:
                 context={"question_length": len(question)}
             )
 
-    async def stream_answer(
+    def stream_answer(
         self,
         question: str,
         user_id: str,
@@ -233,12 +233,12 @@ class RAGService:
         match_threshold: float = 0.75,
         match_count: int = 5,
         compliance_domain: Optional[str] = None,
-        document_version: Optional[str] = None,
+        document_versions: Optional[str] = None,
         document_tags: Optional[List[str]] = None,
         audit_session_id: Optional[str] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None
-    ) -> AsyncGenerator[Union[str, Dict[str, Any]], None]:
+    ) -> Iterator[Union[str, Dict[str, Any]]]:
         """
         Stream answer using RAG pipeline.
         Yields text tokens and metadata.
@@ -246,9 +246,12 @@ class RAGService:
         import time
         start_time = time.time()
         
+        # Use a dedicated event loop within this worker thread for async deps
+        loop = asyncio.new_event_loop()
         try:
-            # Validate user exists and has access
-            user = await self.user_repository.get_by_id(user_id)
+            asyncio.set_event_loop(loop)
+            # Validate user exists and has access (run async call synchronously)
+            user = loop.run_until_complete(self.user_repository.get_by_id(user_id))
             if not user or not user.is_active:
                 raise ValidationException(
                     detail="Invalid or inactive user",
@@ -265,7 +268,7 @@ class RAGService:
             
             # Step 1: Generate embedding and search for documents
             embedding_request = EmbeddingRequest(text=question)
-            embedding_response = await self.embedding_adapter.generate_embedding(embedding_request)
+            embedding_response = loop.run_until_complete(self.embedding_adapter.generate_embedding(embedding_request))
             
             search_request = VectorSearchRequest(
                 query_embedding=embedding_response.embedding,
@@ -273,18 +276,22 @@ class RAGService:
                 match_count=match_count,
                 compliance_domain=compliance_domain,
                 user_domains=user.compliance_domains if not user.is_admin() else None,
-                document_version=document_version,
+                document_versions=document_versions,
                 document_tags=document_tags
             )
             
-            search_response = await self.vector_search_adapter.search_similar_documents(search_request)
+            search_response = loop.run_until_complete(self.vector_search_adapter.search_similar_documents(search_request))
             
             # Yield metadata first
             source_document_ids = [match.id for match in search_response.matches]
+            logger.info("----------------------------------------------------")
+            logger.info(search_response)
+            logger.info(source_document_ids)
+            logger.info("----------------------------------------------------")
             metadata = self._build_query_metadata(
                 search_response.matches,
                 compliance_domain,
-                document_version,
+                document_versions,
                 document_tags,
                 embedding_response,
                 None  # LLM response not available yet
@@ -317,19 +324,18 @@ class RAGService:
             
             # For now, generate the full response and yield it token by token
             # In a real implementation, you'd want streaming support in the LLM adapter
-            llm_response = await self.llm_adapter.generate_text(llm_request)
+            llm_response = loop.run_until_complete(self.llm_adapter.generate_text(llm_request))
             
             # Simulate streaming while preserving Markdown formatting
             content = llm_response.content
             chunk_size = 128
             for i in range(0, len(content), chunk_size):
                 yield content[i:i+chunk_size]
-                await asyncio.sleep(0.01)
             
             # Log activities (similar to non-streaming version)
             if self.chat_history_repository:
                 try:
-                    await self._log_chat_history(
+                    loop.run_until_complete(self._log_chat_history(
                         conversation_id=conversation_id,
                         question=question,
                         answer=llm_response.content,
@@ -342,13 +348,13 @@ class RAGService:
                         response_time_ms=int((time.time() - start_time) * 1000),
                         total_tokens_used=llm_response.tokens_used,
                         metadata=metadata
-                    )
+                    ))
                 except Exception as e:
                     logger.warning(f"Failed to log chat history: {e}")
             
             if self.audit_log_repository and audit_session_id:
                 try:
-                    await self._log_document_access(
+                    loop.run_until_complete(self._log_document_access(
                         user_id=user_id,
                         document_ids=source_document_ids,
                         audit_session_id=audit_session_id,
@@ -357,7 +363,7 @@ class RAGService:
                         answer=llm_response.content,
                         ip_address=ip_address,
                         user_agent=user_agent
-                    )
+                    ))
                 except Exception as e:
                     logger.warning(f"Failed to log audit entries: {e}")
             
@@ -370,6 +376,11 @@ class RAGService:
                 error_code="RAG_STREAMING_FAILED",
                 context={"question_length": len(question)}
             )
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
 
     def _build_rag_prompt(
         self, 
@@ -417,7 +428,7 @@ class RAGService:
         self,
         matches: List,
         compliance_domain: Optional[str],
-        document_version: Optional[str],
+        document_versions: Optional[List[str]],
         document_tags: Optional[List[str]],
         embedding_response,
         llm_response
@@ -464,7 +475,7 @@ class RAGService:
                 "document_id": str(match.id),
                 "document_tags": md.get("document_tags", []) or [],
                 "source_filename": md.get("source_filename"),
-                "document_version": md.get("document_version"),
+                "document_version": md.get("document_versions"),
                 "compliance_domain": md.get("compliance_domain"),
                 "source_page_number": md.get("source_page_number"),
             })
@@ -477,11 +488,12 @@ class RAGService:
         regulatory_tags = [t for t in all_tags if any(k in t.lower() for k in ["iso", "gdpr", "sox", "hipaa", "pci"])]
         document_types = [t for t in all_tags if any(k in t.lower() for k in ["policy", "procedure", "standard", "guideline"])]
 
-        return {
+        # Build aggregated metadata with only allowed keys
+        base_metadata: Dict[str, Any] = {
             "queried_tags": document_tags if document_tags else None,
             "queried_domain": compliance_domain,
             "source_domains": list(source_domains),
-            "queried_version": document_version,
+            "queried_version": document_versions,
             "source_versions": list(source_versions),
             "best_match_score": best_match_score,
             "document_details": document_details,
@@ -500,6 +512,8 @@ class RAGService:
             },
             "total_documents_retrieved": count,
         }
+
+        return base_metadata
 
     async def _log_chat_history(self, **kwargs):
         """Persist chat history using repository."""

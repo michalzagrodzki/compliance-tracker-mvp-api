@@ -22,7 +22,7 @@ class VectorSearchRequest:
     match_count: int = 5
     compliance_domain: Optional[str] = None
     user_domains: Optional[List[str]] = None
-    document_version: Optional[str] = None
+    document_versions: Optional[List[str]] = None
     document_tags: Optional[List[str]] = None
     context: Optional[Dict[str, Any]] = None
 
@@ -74,7 +74,9 @@ class SupabaseVectorSearchAdapter(BaseVectorSearchAdapter):
     async def search_similar_documents(self, request: VectorSearchRequest) -> VectorSearchResponse:
         """Search for similar documents using Supabase RPC function."""
         import uuid
-        
+        logger.info("++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+        logger.info("search_similar_documents in SupabaseVectorSearchAdapter")
+        logger.info("++++++++++++++++++++++++++++++++++++++++++++++++++++++")
         start_time = time.time()
         request_id = str(uuid.uuid4())
         
@@ -101,17 +103,31 @@ class SupabaseVectorSearchAdapter(BaseVectorSearchAdapter):
                     value=request.match_count
                 )
             
-            # Prepare RPC parameters
-            rpc_params = {
+            # Prepare RPC parameters (omit None/empty filters to avoid over-filtering)
+            base_params = {
                 "query_embedding": request.query_embedding,
-                "match_threshold": request.match_threshold,
-                "match_count": request.match_count,
-                "compliance_domain_filter": request.compliance_domain,
-                "user_domains": request.user_domains,
-                "document_version_filter": request.document_version,
-                "document_tags_filter": request.document_tags
+                "match_threshold": float(request.match_threshold),
+                "match_count": int(request.match_count),
             }
+
+            # Only include filters that are meaningfully set
+            if request.compliance_domain:
+                base_params["compliance_domain_filter"] = request.compliance_domain
+            if request.user_domains:
+                # Avoid passing empty list which some RPCs treat as no rows
+                if isinstance(request.user_domains, list) and len(request.user_domains) > 0:
+                    base_params["user_domains"] = request.user_domains
+            if request.document_versions:
+                base_params["document_version_filter"] = request.document_versions
+            if request.document_tags:
+                if isinstance(request.document_tags, list) and len(request.document_tags) > 0:
+                    base_params["document_tags_filter"] = request.document_tags
+
+            rpc_params = base_params
             
+            logger.info("++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+            logger.info(rpc_params)
+            logger.info("++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             logger.debug(f"Making Supabase RPC call: {self.rpc_function}")
             
             # Execute RPC function
@@ -125,17 +141,55 @@ class SupabaseVectorSearchAdapter(BaseVectorSearchAdapter):
                 matches = []
             else:
                 matches = response.data
+
+            # Fallback strategies if no matches: progressively relax constraints
+            # 1) Retry without version/tags filters
+            if not matches:
+                relaxed_params = dict(base_params)
+                relaxed_params.pop("document_version_filter", None)
+                relaxed_params.pop("document_tags_filter", None)
+                try:
+                    fallback_resp = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.supabase.rpc(self.rpc_function, relaxed_params).execute()
+                    )
+                    if hasattr(fallback_resp, 'data') and fallback_resp.data:
+                        matches = fallback_resp.data
+                        logger.info("Vector search fallback: removed version/tags filters produced matches")
+                except Exception as fe:
+                    logger.debug(f"Vector search fallback 1 failed: {fe}")
+
+            # 2) Retry with slightly lower threshold
+            if not matches:
+                relaxed_low = dict(base_params)
+                relaxed_low["match_threshold"] = max(0.55, float(request.match_threshold) - 0.15)
+                try:
+                    low_resp = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.supabase.rpc(self.rpc_function, relaxed_low).execute()
+                    )
+                    if hasattr(low_resp, 'data') and low_resp.data:
+                        matches = low_resp.data
+                        logger.info("Vector search fallback: lowered threshold produced matches")
+                except Exception as fe2:
+                    logger.debug(f"Vector search fallback 2 failed: {fe2}")
             
             response_time_ms = (time.time() - start_time) * 1000
             
             # Convert to DocumentMatch objects
             document_matches = []
             for doc in matches:
+                # Some RPCs may alias fields differently; be defensive
+                doc_id = doc.get("id") or doc.get("document_id") or doc.get("chunk_id") or ""
+                content = doc.get("content") or doc.get("chunk_content") or doc.get("text") or ""
+                sim_val = doc.get("similarity") or doc.get("score") or 0.0
+                metadata = doc.get("metadata") or doc.get("meta") or {}
+
                 document_match = DocumentMatch(
-                    id=doc.get("id", ""),
-                    content=doc.get("content", ""),
-                    similarity=float(doc.get("similarity", 0.0)),
-                    metadata=doc.get("metadata", {})
+                    id=str(doc_id),
+                    content=str(content),
+                    similarity=float(sim_val),
+                    metadata=metadata if isinstance(metadata, dict) else {"raw_metadata": metadata}
                 )
                 document_matches.append(document_match)
             
@@ -146,7 +200,7 @@ class SupabaseVectorSearchAdapter(BaseVectorSearchAdapter):
                     "match_threshold": request.match_threshold,
                     "match_count": request.match_count,
                     "compliance_domain": request.compliance_domain,
-                    "document_version": request.document_version,
+                    "document_version": request.document_versions,
                     "document_tags": request.document_tags,
                     "embedding_dimensions": len(request.query_embedding)
                 },
@@ -191,71 +245,3 @@ class SupabaseVectorSearchAdapter(BaseVectorSearchAdapter):
             return self.supabase is not None
         except Exception:
             return False
-
-
-class MockVectorSearchAdapter(BaseVectorSearchAdapter):
-    """
-    Mock vector search adapter for testing and development.
-    """
-
-    def __init__(self, delay_ms: int = 100):
-        self.delay_ms = delay_ms
-        logger.info("Mock vector search adapter initialized")
-
-    async def search_similar_documents(self, request: VectorSearchRequest) -> VectorSearchResponse:
-        """Generate mock search results."""
-        import uuid
-        import random
-        
-        start_time = time.time()
-        
-        # Simulate search delay
-        await asyncio.sleep(self.delay_ms / 1000)
-        
-        # Generate mock document matches
-        mock_matches = []
-        num_matches = min(request.match_count, random.randint(1, request.match_count))
-        
-        for i in range(num_matches):
-            # Generate similarity score above threshold
-            similarity = random.uniform(request.match_threshold, 1.0)
-            
-            mock_match = DocumentMatch(
-                id=f"mock-doc-{i+1}",
-                content=f"This is mock document content {i+1} that would be relevant to your query. In a real implementation, this would contain actual document text from your knowledge base.",
-                similarity=similarity,
-                metadata={
-                    "source_filename": f"mock_document_{i+1}.pdf",
-                    "compliance_domain": request.compliance_domain or "ISO27001",
-                    "document_version": request.document_version or "v1.0",
-                    "document_tags": request.document_tags or ["mock", "test"],
-                    "chunk_index": i,
-                    "author": "Mock Author",
-                    "title": f"Mock Document {i+1}",
-                    "mock": True
-                }
-            )
-            mock_matches.append(mock_match)
-        
-        response_time_ms = (time.time() - start_time) * 1000
-        
-        return VectorSearchResponse(
-            matches=mock_matches,
-            query_metadata={
-                "match_threshold": request.match_threshold,
-                "match_count": request.match_count,
-                "compliance_domain": request.compliance_domain,
-                "document_version": request.document_version,
-                "document_tags": request.document_tags,
-                "embedding_dimensions": len(request.query_embedding),
-                "mock": True
-            },
-            response_time_ms=response_time_ms,
-            request_id=str(uuid.uuid4()),
-            total_matches=len(mock_matches),
-            created_at=datetime.utcnow()
-        )
-
-    def is_healthy(self) -> bool:
-        """Mock adapter is always healthy."""
-        return True
