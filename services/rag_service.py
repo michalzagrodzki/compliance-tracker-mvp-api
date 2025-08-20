@@ -307,7 +307,10 @@ class RAGService:
                 context={
                     "role": "compliance expert",
                     "domain": compliance_domain or "general compliance",
-                    "instructions": "Provide accurate, helpful responses based on the provided context."
+                    "instructions": (
+                        "Provide accurate, helpful responses based on the provided context. "
+                        "Format the answer in clear Markdown (use headings, bullet lists, and code blocks when helpful)."
+                    )
                 }
             )
             
@@ -315,15 +318,11 @@ class RAGService:
             # In a real implementation, you'd want streaming support in the LLM adapter
             llm_response = await self.llm_adapter.generate_text(llm_request)
             
-            # Simulate streaming by yielding words
-            words = llm_response.content.split()
-            for i, word in enumerate(words):
-                if i == 0:
-                    yield word
-                else:
-                    yield f" {word}"
-                
-                # Small delay to simulate streaming
+            # Simulate streaming while preserving Markdown formatting
+            content = llm_response.content
+            chunk_size = 128
+            for i in range(0, len(content), chunk_size):
+                yield content[i:i+chunk_size]
                 await asyncio.sleep(0.01)
             
             # Log activities (similar to non-streaming version)

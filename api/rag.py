@@ -1,6 +1,7 @@
 import time
 import uuid
 import logging
+import json
 from typing import AsyncGenerator, Dict, Any, Union
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
@@ -177,6 +178,9 @@ async def query_stream(
                     ip_address=ip_address,
                     user_agent=user_agent
                 ):
+                    # Only stream text chunks; drop metadata objects
+                    if isinstance(token_data, (dict, list)):
+                        continue
                     yield token_data
                 
                 # Update audit session query count after streaming completes
@@ -206,7 +210,7 @@ async def query_stream(
 
     return StreamingResponse(
         event_generator(),
-        media_type="text/plain; charset=utf-8",
+        media_type="text/markdown; charset=utf-8",
         headers={
             "x-conversation-id": conversation_id,
             "x-audit-session-id": req.audit_session_id or "",
