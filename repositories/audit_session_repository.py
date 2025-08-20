@@ -41,22 +41,17 @@ class AuditSessionRepository(SupabaseRepository[AuditSession]):
     async def create(self, session_create: AuditSessionCreate) -> AuditSession:
         """Create a new audit session."""
         try:
-            # Generate ID and timestamps
             session_id = str(uuid.uuid4())
             now = datetime.now(timezone.utc)
             
-            # Convert to dict and add required fields
             session_data = session_create.model_dump()
             session_data.update({
                 "id": session_id,
                 "is_active": True,
                 "total_queries": 0,
-                "started_at": now.isoformat(),
-                "created_at": now.isoformat(),
-                "updated_at": now.isoformat()
+                "started_at": now.isoformat()
             })
             
-            # Insert into database
             result = self.supabase.table(self.table_name).insert(session_data).execute()
             
             if not result.data:
@@ -202,11 +197,7 @@ class AuditSessionRepository(SupabaseRepository[AuditSession]):
             if not update_dict:
                 # No changes to apply
                 return await self.get_by_id(session_id)
-            
-            # Add updated timestamp
-            update_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
-            
-            # Handle datetime fields
+
             if "ended_at" in update_dict and update_dict["ended_at"] is not None:
                 if isinstance(update_dict["ended_at"], datetime):
                     update_dict["ended_at"] = update_dict["ended_at"].isoformat()
@@ -262,8 +253,7 @@ class AuditSessionRepository(SupabaseRepository[AuditSession]):
                 # Soft delete: deactivate and set end time
                 update_data = {
                     "is_active": False,
-                    "ended_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": datetime.now(timezone.utc).isoformat()
+                    "ended_at": datetime.now(timezone.utc).isoformat()
                 }
                 
                 result = self.supabase.table(self.table_name)\
@@ -314,7 +304,6 @@ class AuditSessionRepository(SupabaseRepository[AuditSession]):
                 for field, value in filters.model_dump().items():
                     if value is not None:
                         if field == "session_name_contains":
-                            # Use ilike for partial name matching
                             query = query.ilike("session_name", f"%{value}%")
                         elif field in ["started_after", "ended_after"]:
                             date_field = field.replace("_after", "_at")
@@ -327,15 +316,12 @@ class AuditSessionRepository(SupabaseRepository[AuditSession]):
                 
                 query = self._build_filters(query, filter_dict)
             
-            # Apply ordering (default to started_at desc)
             query = self._apply_ordering(query, order_by or "-started_at")
             
-            # Apply pagination
             query = query.range(skip, skip + limit - 1)
             
             result = query.execute()
             
-            # Convert to AuditSession entities
             sessions = [AuditSession.from_dict(session_data) for session_data in result.data]
             
             logger.debug(f"Listed {len(sessions)} audit sessions with filters: {filters}")
@@ -418,8 +404,7 @@ class AuditSessionRepository(SupabaseRepository[AuditSession]):
             # Update query count
             result = self.supabase.table(self.table_name)\
                 .update({
-                    "total_queries": new_count,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
+                    "total_queries": new_count
                 })\
                 .eq("id", session_id)\
                 .execute()
