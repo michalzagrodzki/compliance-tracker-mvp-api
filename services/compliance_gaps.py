@@ -179,6 +179,39 @@ def create_compliance_gap(gap_data: Dict[str, Any]) -> Dict[str, Any]:
             except (ValueError, TypeError):
                 logger.warning(f"Invalid chat_history_id format: {gap_data['chat_history_id']}")
                 gap_data["chat_history_id"] = None
+
+        # If created from chat history, enrich payload with missing fields
+        creation_method = gap_data.get("creation_method")
+        from_chat_history = (
+            creation_method == "from_chat_history" or (
+                gap_data.get("chat_history_id") is not None and not gap_data.get("original_question")
+            )
+        )
+        if from_chat_history:
+            chat_id = gap_data.get("chat_history_id")
+            if not chat_id:
+                raise HTTPException(status_code=400, detail="chat_history_id is required when creation_method is from_chat_history")
+
+            chat_history = get_chat_history_by_id(chat_id)
+            if not chat_history:
+                raise HTTPException(status_code=400, detail="Invalid chat_history_id: source not found")
+
+            # Populate key fields from chat history when missing
+            gap_data.setdefault("original_question", chat_history.get("question"))
+            if not gap_data.get("audit_session_id"):
+                gap_data["audit_session_id"] = chat_history.get("audit_session_id")
+            if not gap_data.get("compliance_domain"):
+                gap_data["compliance_domain"] = chat_history.get("compliance_domain")
+            if not gap_data.get("user_id"):
+                gap_data["user_id"] = chat_history.get("user_id")
+            # Map related arrays/metrics if not provided
+            gap_data.setdefault("related_documents", chat_history.get("source_document_ids") or [])
+            if not gap_data.get("similarity_threshold_used") and chat_history.get("match_threshold") is not None:
+                gap_data["similarity_threshold_used"] = chat_history.get("match_threshold")
+
+            # Remove helper-only field so we don't try to insert it as a column
+            if "creation_method" in gap_data:
+                gap_data.pop("creation_method", None)
         
         # Handle potential_fine_amount - ensure it's a proper decimal/float
         if "potential_fine_amount" in gap_data and gap_data["potential_fine_amount"]:
@@ -247,11 +280,11 @@ def create_compliance_gap(gap_data: Dict[str, Any]) -> Dict[str, Any]:
             )
 
         nullable_fields = {
-            "chat_history_id", "pdf_ingestion_id", "expected_answer_type", 
+            "chat_history_id", "pdf_ingestion_id", "expected_answer_type",
             "similarity_threshold_used", "best_match_score", "potential_fine_amount",
             "assigned_to", "due_date", "resolution_notes", "recommendation_type",
             "recommendation_text", "acknowledged_at", "resolved_at", "last_reviewed_at",
-            "ip_address", "user_agent", "assigned_to", "due_date" "resolution_notes"
+            "ip_address", "user_agent"
         }
         
         filtered_gap_data = {}
