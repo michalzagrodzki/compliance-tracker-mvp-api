@@ -9,13 +9,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 import time
-
+from openai import AsyncOpenAI
 from common.exceptions import (
     ExternalServiceException,
     ValidationException,
     BusinessLogicException
 )
 from common.logging import get_logger, log_performance
+from config.config import settings
 
 logger = get_logger("embedding_adapter")
 
@@ -63,8 +64,7 @@ class OpenAIEmbeddingAdapter(BaseEmbeddingAdapter):
     """
     OpenAI embedding adapter for text embedding generation.
     """
-
-    def __init__(self, api_key: str, default_model: str = "text-embedding-3-small", timeout: int = 30):
+    def __init__(self, api_key: str, default_model: str = settings.embedding_model, timeout: int = 30):
         self.api_key = api_key
         self.default_model = default_model
         self.timeout = timeout
@@ -72,10 +72,8 @@ class OpenAIEmbeddingAdapter(BaseEmbeddingAdapter):
         self._initialize_client()
 
     def _initialize_client(self):
-        """Initialize OpenAI client."""
         try:
-            import openai
-            self._client = openai.AsyncOpenAI(api_key=self.api_key)
+            self._client = AsyncOpenAI(api_key=self.api_key)
             logger.info("OpenAI embedding client initialized successfully")
         except ImportError:
             logger.error("OpenAI library not installed. Install with: pip install openai")
@@ -123,7 +121,8 @@ class OpenAIEmbeddingAdapter(BaseEmbeddingAdapter):
             
             # Extract response data
             embedding = response.data[0].embedding
-            token_count = response.usage.total_tokens
+            # Some SDK versions/models may omit usage for embeddings; handle defensively
+            token_count = getattr(getattr(response, "usage", None), "total_tokens", 0) or 0
             response_time_ms = (time.time() - start_time) * 1000
             
             # Create response object
@@ -134,8 +133,8 @@ class OpenAIEmbeddingAdapter(BaseEmbeddingAdapter):
                 response_time_ms=response_time_ms,
                 request_id=request_id,
                 metadata={
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "total_tokens": response.usage.total_tokens,
+                    "prompt_tokens": getattr(getattr(response, "usage", None), "prompt_tokens", 0) or 0,
+                    "total_tokens": token_count,
                     "text_length": len(request.text),
                     "embedding_dimensions": len(embedding)
                 },
@@ -229,7 +228,7 @@ class OpenAIEmbeddingAdapter(BaseEmbeddingAdapter):
                     model=model,
                     input=texts
                 ),
-                timeout=self.timeout * len(texts)  # Scale timeout with batch size
+                timeout=self.timeout * max(1, len(texts))  # basic scaling with batch size
             )
             
             # Extract response data
@@ -241,7 +240,7 @@ class OpenAIEmbeddingAdapter(BaseEmbeddingAdapter):
                 embedding_response = EmbeddingResponse(
                     embedding=data.embedding,
                     model_used=response.model,
-                    token_count=response.usage.total_tokens // len(response.data),  # Approximate per-text tokens
+                    token_count=(getattr(getattr(response, "usage", None), "total_tokens", 0) or 0) // max(1, len(response.data)),
                     response_time_ms=response_time_ms,
                     request_id=f"{request_id}-{i}",
                     metadata={
@@ -249,7 +248,7 @@ class OpenAIEmbeddingAdapter(BaseEmbeddingAdapter):
                         "batch_size": len(texts),
                         "text_length": len(texts[i]),
                         "embedding_dimensions": len(data.embedding),
-                        "total_batch_tokens": response.usage.total_tokens
+                        "total_batch_tokens": getattr(getattr(response, "usage", None), "total_tokens", 0) or 0
                     },
                     created_at=datetime.utcnow()
                 )
@@ -260,7 +259,7 @@ class OpenAIEmbeddingAdapter(BaseEmbeddingAdapter):
                 operation="openai_batch_embedding_generation",
                 duration_ms=response_time_ms,
                 success=True,
-                token_count=response.usage.total_tokens,
+                token_count=getattr(getattr(response, "usage", None), "total_tokens", 0) or 0,
                 item_count=len(texts)
             )
             
@@ -301,60 +300,3 @@ class OpenAIEmbeddingAdapter(BaseEmbeddingAdapter):
             return self._client is not None
         except Exception:
             return False
-
-
-class MockEmbeddingAdapter(BaseEmbeddingAdapter):
-    """
-    Mock embedding adapter for testing and development.
-    """
-
-    def __init__(self, delay_ms: int = 50, dimensions: int = 1536):
-        self.delay_ms = delay_ms
-        self.dimensions = dimensions
-        logger.info("Mock embedding adapter initialized")
-
-    async def generate_embedding(self, request: EmbeddingRequest) -> EmbeddingResponse:
-        """Generate mock embedding."""
-        import uuid
-        import random
-        
-        start_time = time.time()
-        
-        # Simulate API delay
-        await asyncio.sleep(self.delay_ms / 1000)
-        
-        # Generate mock embedding (normalized random vector)
-        embedding = [random.gauss(0, 0.5) for _ in range(self.dimensions)]
-        # Normalize the vector
-        magnitude = sum(x*x for x in embedding) ** 0.5
-        embedding = [x / magnitude for x in embedding]
-        
-        response_time_ms = (time.time() - start_time) * 1000
-        
-        return EmbeddingResponse(
-            embedding=embedding,
-            model_used="mock-text-embedding-3-small",
-            token_count=len(request.text.split()),  # Rough token estimate
-            response_time_ms=response_time_ms,
-            request_id=str(uuid.uuid4()),
-            metadata={
-                "mock": True, 
-                "delay_ms": self.delay_ms,
-                "dimensions": self.dimensions,
-                "text_length": len(request.text)
-            },
-            created_at=datetime.utcnow()
-        )
-
-    async def generate_batch_embeddings(self, requests: List[EmbeddingRequest]) -> List[EmbeddingResponse]:
-        """Generate batch mock embeddings."""
-        if not requests:
-            return []
-        
-        # Generate embeddings concurrently
-        tasks = [self.generate_embedding(request) for request in requests]
-        return await asyncio.gather(*tasks)
-
-    def is_healthy(self) -> bool:
-        """Mock adapter is always healthy."""
-        return True

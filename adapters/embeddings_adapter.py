@@ -46,8 +46,9 @@ class OpenAIEmbeddingsAdapter(BaseEmbeddingsAdapter):
 
     def _init_client(self):
         try:
-            import openai
-            self._client = openai.OpenAI(api_key=self.api_key)
+            from openai import OpenAI
+            # Configure default request timeout at client level
+            self._client = OpenAI(api_key=self.api_key)
         except ImportError:
             raise BusinessLogicException(detail="openai package not installed", error_code="DEPENDENCY_MISSING")
 
@@ -63,7 +64,10 @@ class OpenAIEmbeddingsAdapter(BaseEmbeddingsAdapter):
         try:
             for i in range(0, len(texts), batch_size):
                 batch = texts[i : i + batch_size]
-                resp = self._client.embeddings.create(model=model, input=batch, timeout=self.timeout)
+                # Use per-request timeout via with_options per OpenAI v1 SDK guidance
+                resp = self._client.with_options(timeout=self.timeout).embeddings.create(
+                    model=model, input=batch
+                )
                 # Ensure ordering aligns with inputs
                 vectors.extend([item.embedding for item in resp.data])
             duration_ms = (time.time() - start) * 1000
@@ -103,4 +107,3 @@ class MockEmbeddingsAdapter(BaseEmbeddingsAdapter):
 
     def embed_query(self, text: str, model: Optional[str] = None) -> List[float]:
         return self.embed_texts([text])[0]
-

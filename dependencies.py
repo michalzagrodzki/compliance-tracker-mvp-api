@@ -28,7 +28,7 @@ from services.audit_log_service import AuditLogService, create_audit_log_service
 from services.audit_session_service import AuditSessionService, create_audit_session_service
 from services.audit_report_service import AuditReportService, create_audit_report_service
 from adapters.openai_adapter import OpenAIAdapter, MockAIAdapter
-from adapters.embedding_adapter import BaseEmbeddingAdapter, OpenAIEmbeddingAdapter, MockEmbeddingAdapter
+from adapters.embedding_adapter import BaseEmbeddingAdapter, OpenAIEmbeddingAdapter
 from adapters.vector_search_adapter import BaseVectorSearchAdapter, SupabaseVectorSearchAdapter
 from services.rag_service import RAGService, create_rag_service
 from config.config import settings
@@ -217,7 +217,7 @@ def get_embedding_adapter() -> BaseEmbeddingAdapter:
     if openai_api_key:
         return OpenAIEmbeddingAdapter(api_key=openai_api_key)
     else:
-        return MockEmbeddingAdapter(delay_ms=100)
+        return
 
 
 @lru_cache()

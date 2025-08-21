@@ -74,9 +74,6 @@ class SupabaseVectorSearchAdapter(BaseVectorSearchAdapter):
     async def search_similar_documents(self, request: VectorSearchRequest) -> VectorSearchResponse:
         """Search for similar documents using Supabase RPC function."""
         import uuid
-        logger.info("++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-        logger.info("search_similar_documents in SupabaseVectorSearchAdapter")
-        logger.info("++++++++++++++++++++++++++++++++++++++++++++++++++++++")
         start_time = time.time()
         request_id = str(uuid.uuid4())
         
@@ -117,17 +114,23 @@ class SupabaseVectorSearchAdapter(BaseVectorSearchAdapter):
                 # Avoid passing empty list which some RPCs treat as no rows
                 if isinstance(request.user_domains, list) and len(request.user_domains) > 0:
                     base_params["user_domains"] = request.user_domains
+            # RPC expects a single text for document_version_filter, not a list
             if request.document_versions:
-                base_params["document_version_filter"] = request.document_versions
+                # Accept both str and List[str] defensively
+                dv = request.document_versions
+                if isinstance(dv, list):
+                    if len(dv) == 1:
+                        base_params["document_version_filter"] = dv[0]
+                    else:
+                        # Multiple versions not supported by RPC; skip here and try relaxed/iterative fallbacks
+                        logger.debug("Multiple document versions supplied; deferring version filtering to fallbacks")
+                elif isinstance(dv, str):
+                    base_params["document_version_filter"] = dv
             if request.document_tags:
                 if isinstance(request.document_tags, list) and len(request.document_tags) > 0:
                     base_params["document_tags_filter"] = request.document_tags
 
             rpc_params = base_params
-            
-            logger.info("++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-            logger.info(rpc_params)
-            logger.info("++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             logger.debug(f"Making Supabase RPC call: {self.rpc_function}")
             
             # Execute RPC function
@@ -159,6 +162,26 @@ class SupabaseVectorSearchAdapter(BaseVectorSearchAdapter):
                 except Exception as fe:
                     logger.debug(f"Vector search fallback 1 failed: {fe}")
 
+            # 1a) If multiple versions were provided, try iterating through them until we get results
+            if not matches and isinstance(request.document_versions, list) and len(request.document_versions) > 1:
+                for dv in request.document_versions:
+                    iter_params = dict(base_params)
+                    iter_params["document_version_filter"] = dv
+                    try:
+                        iter_resp = await asyncio.get_event_loop().run_in_executor(
+                            None,
+                            lambda: self.supabase.rpc(self.rpc_function, iter_params).execute()
+                        )
+                        if hasattr(iter_resp, 'data') and iter_resp.data:
+                            matches = (matches or []) + iter_resp.data
+                            # Stop if we reached requested count
+                            if len(matches) >= int(request.match_count):
+                                matches = matches[: int(request.match_count)]
+                                logger.info("Vector search fallback: per-version iteration produced matches")
+                                break
+                    except Exception as fe_iter:
+                        logger.debug(f"Vector search per-version attempt failed for {dv}: {fe_iter}")
+
             # 2) Retry with slightly lower threshold
             if not matches:
                 relaxed_low = dict(base_params)
@@ -183,13 +206,26 @@ class SupabaseVectorSearchAdapter(BaseVectorSearchAdapter):
                 doc_id = doc.get("id") or doc.get("document_id") or doc.get("chunk_id") or ""
                 content = doc.get("content") or doc.get("chunk_content") or doc.get("text") or ""
                 sim_val = doc.get("similarity") or doc.get("score") or 0.0
-                metadata = doc.get("metadata") or doc.get("meta") or {}
+                base_metadata = doc.get("metadata") or doc.get("meta") or {}
+                if not isinstance(base_metadata, dict):
+                    base_metadata = {"raw_metadata": base_metadata}
+                merged_metadata = {
+                    **base_metadata,
+                    **{k: v for k, v in doc.items() if k in {
+                        "compliance_domain",
+                        "document_version",
+                        "document_tags",
+                        "source_filename",
+                        "source_page_number",
+                        "chunk_index"
+                    }}
+                }
 
                 document_match = DocumentMatch(
                     id=str(doc_id),
                     content=str(content),
                     similarity=float(sim_val),
-                    metadata=metadata if isinstance(metadata, dict) else {"raw_metadata": metadata}
+                    metadata=merged_metadata
                 )
                 document_matches.append(document_match)
             
