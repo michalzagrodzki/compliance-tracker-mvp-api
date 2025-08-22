@@ -257,15 +257,25 @@ async def update_existing_audit_report(
 ) -> Dict[str, Any]:
     update_dict = update_data.model_dump(exclude_unset=True)
 
+    # Convert UUID fields to strings to avoid JSON serialization errors
+    for field in ["user_id", "audit_session_id"]:
+        if field in update_dict and update_dict[field]:
+            update_dict[field] = str(update_dict[field])
+
+    for field in ["compliance_gap_ids", "document_ids", "pdf_ingestion_ids"]:
+        if field in update_dict and update_dict[field]:
+            update_dict[field] = [str(uuid_val) for uuid_val in update_dict[field]]
+
     updated_report = await audit_report_service.update_report(report_id, update_dict, str(current_user.id))
 
     if update_dict:
+        serialized_report = serialize_uuids(updated_report)
         create_audit_report_version(
             audit_report_id=report_id,
             changed_by=str(current_user.id),
             change_description=change_description,
             change_type="draft_update",
-            report_snapshot=updated_report
+            report_snapshot=serialized_report
         )
     
     return updated_report
@@ -291,12 +301,13 @@ async def update_audit_report_status(
     
     updated_report = await audit_report_service.update_report(report_id, update_data, str(current_user.id))
 
+    serialized_report = serialize_uuids(updated_report)
     create_audit_report_version(
         audit_report_id=report_id,
         changed_by=str(current_user.id),
         change_description=f"Status changed to {status_update.new_status}" + (f": {status_update.notes}" if status_update.notes else ""),
         change_type="approval_change",
-        report_snapshot=updated_report
+        report_snapshot=serialized_report
     )
     
     return updated_report
