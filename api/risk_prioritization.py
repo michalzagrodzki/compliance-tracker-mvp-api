@@ -116,10 +116,13 @@ def create_control_risk_prioritization(
         medium_risk_gaps=metrics["medium_risk_gaps"],
         low_risk_gaps=metrics["low_risk_gaps"],
         regulatory_gaps=metrics["regulatory_gaps"],
-        potential_financial_impact=metrics["potential_financial_impact"],
-        iso_control_families_affected=metrics["iso_control_families_affected"],
+        total_potential_fines=metrics["total_potential_fines"],
+        affected_control_families=metrics["affected_control_families"],
+        certification_readiness_score=metrics["certification_readiness_score"],
+        estimated_investment_range=metrics["estimated_investment_range"],
         priority_1_gaps=metrics["priority_1_gaps"],
         priority_2_gaps=metrics["priority_2_gaps"],
         priority_3_gaps=metrics["priority_3_gaps"],
+        estimated_timeline_months=metrics["estimated_timeline_months"],
         generation_metadata=generation_metadata
     )
