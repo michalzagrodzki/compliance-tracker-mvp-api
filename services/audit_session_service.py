@@ -553,6 +553,40 @@ class AuditSessionService:
                 error_code="AUDIT_SESSION_CLOSE_FAILED",
                 context={"session_id": session_id}
             )
+    
+    async def open_session(
+        self,
+        session_id: str,
+        user_id: str,
+        session_summary: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> AuditSession:
+        """Open a closed audit session."""
+        try:
+            # Create update data to close the session
+            update_data = AuditSessionUpdate(
+                is_active=True,
+                ended_at=None,
+                session_summary=session_summary
+            )
+            
+            # Update the session
+            return await self.update_session(
+                session_id=session_id,
+                update_data=update_data,
+                user_id=user_id,
+                ip_address=ip_address,
+                user_agent=user_agent
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to open audit session {session_id}: {e}", exc_info=True)
+            raise BusinessLogicException(
+                detail="Failed to open audit session",
+                error_code="AUDIT_SESSION_OPEN_FAILED",
+                context={"session_id": session_id}
+            )
 
 
 # Factory function

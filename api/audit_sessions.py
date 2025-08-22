@@ -504,7 +504,55 @@ async def delete_audit_session(
         raise HTTPException(status_code=500, detail=e.detail)
 
 
-@router.post("/{session_id}/close",
+@router.put("/{session_id}/activate",
+    summary="Activate audit session",
+    description="Activate a closed audit session.",
+    response_model=AuditSessionResponse
+)
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
+async def activate_audit_session(
+    request: Request,
+    session_id: str,
+    audit_session_service: AuditSessionServiceDep = None,
+    current_user: ValidatedUser = None
+) -> AuditSessionResponse:
+    try:
+        ip_address = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent")
+        
+        opened_session = await audit_session_service.open_session(
+            session_id=session_id,
+            user_id=current_user.id,
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+        
+        return AuditSessionResponse(
+            id=opened_session.id,
+            user_id=opened_session.user_id,
+            session_name=opened_session.session_name,
+            compliance_domain=opened_session.compliance_domain,
+            is_active=opened_session.is_active,
+            total_queries=opened_session.total_queries,
+            started_at=opened_session.started_at,
+            ended_at=opened_session.ended_at,
+            session_summary=opened_session.session_summary,
+            audit_report=opened_session.audit_report,
+            ip_address=opened_session.ip_address,
+            user_agent=opened_session.user_agent,
+            created_at=opened_session.created_at,
+            updated_at=opened_session.updated_at
+        )
+        
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.detail)
+    except AuthorizationException as e:
+        raise HTTPException(status_code=403, detail=e.detail)
+    except BusinessLogicException as e:
+        raise HTTPException(status_code=500, detail=e.detail)
+
+
+@router.put("/{session_id}/close",
     summary="Close audit session",
     description="Close an active audit session with optional summary.",
     response_model=AuditSessionResponse
