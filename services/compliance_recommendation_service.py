@@ -3,7 +3,7 @@ ComplianceRecommendationService for generating AI-powered compliance recommendat
 """
 
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from entities.compliance_gap import ComplianceGap, RiskLevel
 from repositories.compliance_gap_repository import ComplianceGapRepository
@@ -105,8 +105,8 @@ class ComplianceRecommendationService:
                 user_id=user_id,
                 details={
                     "compliance_domain": gap.compliance_domain,
-                    "gap_type": gap.gap_type.value,
-                    "risk_level": gap.risk_level.value,
+                    "gap_type": gap.gap_type,
+                    "risk_level": gap.risk_level,
                     "recommendation_type": recommendation_type,
                     "includes_implementation": include_implementation_plan
                 }
@@ -193,7 +193,7 @@ class ComplianceRecommendationService:
                 {
                     "id": gap.id,
                     "title": gap.gap_title,
-                    "risk_level": gap.risk_level.value,
+                    "risk_level": gap.risk_level,
                     "compliance_domain": gap.compliance_domain,
                     "regulatory": gap.regulatory_requirement
                 }
@@ -240,20 +240,20 @@ class ComplianceRecommendationService:
         **Gap Details:**
         - Title: {gap.gap_title}
         - Description: {gap.gap_description}
-        - Type: {gap.gap_type.value}
+        - Type: {gap.gap_type}
         - Category: {gap.gap_category}
-        - Risk Level: {gap.risk_level.value}
-        - Business Impact: {gap.business_impact.value}
+        - Risk Level: {gap.risk_level}
+        - Business Impact: {gap.business_impact}
         - Regulatory Requirement: {gap.regulatory_requirement}
         - Original Question: {gap.original_question}
         
         **Context:**
         - Compliance Domain: {gap.compliance_domain}
-        - Detection Method: {gap.detection_method.value}
+        - Detection Method: {gap.detection_method}
         - Confidence Score: {gap.confidence_score or 'N/A'}
         
         **Current Status:**
-        - Status: {gap.status.value}
+        - Status: {gap.status}
         - Detected: {gap.detected_at.strftime('%Y-%m-%d')}
         - Age: {gap.get_age_in_days()} days
         """
@@ -271,6 +271,7 @@ class ComplianceRecommendationService:
         
         **Request:**
         Provide a {recommendation_type} recommendation that includes:
+        0. Comprehensive recommendation text (a summary paragraph describing the overall recommendation)
         1. Root cause analysis
         2. Specific remediation actions
         3. Risk mitigation strategies
@@ -288,6 +289,8 @@ class ComplianceRecommendationService:
         prompt += """
         
         Focus on practical, actionable recommendations that can be implemented effectively within a typical organizational structure.
+        
+        **Important:** Ensure the recommendation_text field provides a clear, executive-level summary of the overall recommendation in 2-3 paragraphs.
         """
         
         return prompt
@@ -306,8 +309,8 @@ class ComplianceRecommendationService:
         categories = {}
         
         for gap in gaps:
-            gap_types[gap.gap_type.value] = gap_types.get(gap.gap_type.value, 0) + 1
-            risk_levels[gap.risk_level.value] = risk_levels.get(gap.risk_level.value, 0) + 1
+            gap_types[gap.gap_type] = gap_types.get(gap.gap_type, 0) + 1
+            risk_levels[gap.risk_level] = risk_levels.get(gap.risk_level, 0) + 1
             categories[gap.gap_category] = categories.get(gap.gap_category, 0) + 1
         
         prompt = f"""
@@ -323,7 +326,7 @@ class ComplianceRecommendationService:
         """
         
         for i, gap in enumerate(gaps[:10], 1):  # Limit to top 10 gaps
-            prompt += f"\n{i}. {gap.gap_title} ({gap.risk_level.value} risk, {gap.gap_category})"
+            prompt += f"\n{i}. {gap.gap_title} ({gap.risk_level} risk, {gap.gap_category})"
         
         if len(gaps) > 10:
             prompt += f"\n... and {len(gaps) - 10} more gaps"
@@ -366,7 +369,7 @@ class ComplianceRecommendationService:
         for i, gap in enumerate(gaps, 1):
             prompt += f"""
         {i}. {gap.gap_title}
-           - Risk: {gap.risk_level.value}
+           - Risk: {gap.risk_level}
            - Domain: {gap.compliance_domain}
            - Category: {gap.gap_category}
            - Regulatory: {gap.regulatory_requirement}
@@ -401,6 +404,10 @@ class ComplianceRecommendationService:
         """Get schema for gap recommendation response."""
         
         properties = {
+            "recommendation_text": {
+                "type": "string",
+                "description": "Comprehensive textual recommendation summarizing all aspects of addressing this gap"
+            },
             "root_cause_analysis": {
                 "type": "string",
                 "description": "Analysis of why this gap exists"
@@ -436,7 +443,7 @@ class ComplianceRecommendationService:
             }
         }
         
-        required = ["root_cause_analysis", "remediation_actions", "priority_level"]
+        required = ["recommendation_text", "root_cause_analysis", "remediation_actions", "priority_level"]
         
         if include_implementation_plan:
             properties.update({
@@ -537,9 +544,9 @@ class ComplianceRecommendationService:
             "gap_id": gap.id,
             "gap_title": gap.gap_title,
             "compliance_domain": gap.compliance_domain,
-            "current_risk_level": gap.risk_level.value,
+            "current_risk_level": gap.risk_level,
             "regulatory_requirement": gap.regulatory_requirement,
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "gap_age_days": gap.get_age_in_days()
         })
         

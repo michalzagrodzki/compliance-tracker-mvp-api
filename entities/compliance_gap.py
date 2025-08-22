@@ -2,7 +2,7 @@
 ComplianceGap entity model for the domain layer.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from decimal import Decimal
 from pydantic import BaseModel, Field, validator
@@ -158,21 +158,25 @@ class ComplianceGap(BaseModel):
         """Check if the gap is overdue (has due date in the past and not resolved)."""
         if self.due_date is None or self.is_resolved():
             return False
-        return datetime.utcnow() > self.due_date
+        now = datetime.now(timezone.utc)
+        due = self.due_date
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=timezone.utc)
+        return now > due
 
     def acknowledge(self, user_id: str) -> None:
         """Mark the gap as acknowledged."""
         if self.status == GapStatus.IDENTIFIED:
             self.status = GapStatus.ACKNOWLEDGED
-            self.acknowledged_at = datetime.utcnow()
-            self.updated_at = datetime.utcnow()
+            self.acknowledged_at = datetime.now(timezone.utc)
+            self.updated_at = datetime.now(timezone.utc)
 
     def assign_to(self, user_id: str, due_date: Optional[datetime] = None) -> None:
         """Assign the gap to a user."""
         self.assigned_to = user_id
         if due_date:
             self.due_date = due_date
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
         
         # If gap was just identified, acknowledge it
         if self.status == GapStatus.IDENTIFIED:
@@ -182,36 +186,36 @@ class ComplianceGap(BaseModel):
         """Mark the gap as being worked on."""
         if self.status in [GapStatus.IDENTIFIED, GapStatus.ACKNOWLEDGED]:
             self.status = GapStatus.IN_PROGRESS
-            self.updated_at = datetime.utcnow()
+            self.updated_at = datetime.now(timezone.utc)
 
     def resolve(self, resolution_notes: Optional[str] = None) -> None:
         """Mark the gap as resolved."""
         self.status = GapStatus.RESOLVED
-        self.resolved_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.resolved_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
         if resolution_notes:
             self.resolution_notes = resolution_notes
 
     def mark_false_positive(self, notes: Optional[str] = None) -> None:
         """Mark the gap as a false positive."""
         self.status = GapStatus.FALSE_POSITIVE
-        self.resolved_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.resolved_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
         if notes:
             self.resolution_notes = notes
 
     def accept_risk(self, notes: Optional[str] = None) -> None:
         """Accept the risk and close the gap."""
         self.status = GapStatus.ACCEPTED_RISK
-        self.resolved_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.resolved_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
         if notes:
             self.resolution_notes = notes
 
     def review(self, reviewer_id: str) -> None:
         """Mark the gap as reviewed."""
-        self.last_reviewed_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.last_reviewed_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
 
     def update_risk_assessment(self, risk_level: RiskLevel, business_impact: BusinessImpact, 
                               potential_fine: Optional[Decimal] = None) -> None:
@@ -220,7 +224,7 @@ class ComplianceGap(BaseModel):
         self.business_impact = business_impact
         if potential_fine is not None:
             self.potential_fine_amount = potential_fine
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def add_recommendation(self, recommendation_type: str, recommendation_text: str, 
                           recommended_actions: Optional[List[str]] = None) -> None:
@@ -229,16 +233,26 @@ class ComplianceGap(BaseModel):
         self.recommendation_text = recommendation_text
         if recommended_actions:
             self.recommended_actions = recommended_actions
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def get_age_in_days(self) -> int:
         """Get the age of the gap in days."""
-        return (datetime.utcnow() - self.detected_at).days
+        now = datetime.now(timezone.utc)
+        detected = self.detected_at
+        if detected.tzinfo is None:
+            detected = detected.replace(tzinfo=timezone.utc)
+        return (now - detected).days
 
     def get_resolution_time_days(self) -> Optional[int]:
         """Get resolution time in days if resolved."""
         if self.resolved_at:
-            return (self.resolved_at - self.detected_at).days
+            detected = self.detected_at
+            resolved = self.resolved_at
+            if detected.tzinfo is None:
+                detected = detected.replace(tzinfo=timezone.utc)
+            if resolved.tzinfo is None:
+                resolved = resolved.replace(tzinfo=timezone.utc)
+            return (resolved - detected).days
         return None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -281,6 +295,12 @@ class ComplianceGap(BaseModel):
                     data[field] = Decimal(str(data[field]))
                 except (ValueError, TypeError):
                     pass
+        
+        # Handle string fields that might come as integers from database
+        string_fields = ['chat_history_id']
+        for field in string_fields:
+            if data.get(field) is not None and not isinstance(data[field], str):
+                data[field] = str(data[field])
         
         return cls(**data)
 

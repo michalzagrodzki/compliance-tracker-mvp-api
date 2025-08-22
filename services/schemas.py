@@ -598,9 +598,20 @@ class ComplianceGapFromChatHistoryRequest(BaseModel):
         return v
 
 class ComplianceRecommendationRequest(BaseModel):
-    chat_history_item: ChatHistoryItem
+    gap_id: Optional[str] = Field(None, description="Existing compliance gap UUID to generate recommendation for")
+    chat_history_item: Optional[ChatHistoryItem] = Field(
+        None,
+        description="Chat history context used to create a gap when gap_id is not provided",
+    )
     recommendation_type: str = Field(..., description="Type of recommendation to generate")
     iso_control: Optional[str] = Field(None, description="ISO 27001 control identifier (e.g., 'A.8.1.1')")
+
+    @validator("chat_history_item", always=True)
+    def validate_input_source(cls, v, values):
+        # Accept either gap_id or chat_history_item; at least one must be provided
+        if values.get("gap_id") is None and v is None:
+            raise ValueError("Either gap_id or chat_history_item must be provided")
+        return v
 
 class ComplianceRecommendationResponse(BaseModel):
     recommendation_text: str

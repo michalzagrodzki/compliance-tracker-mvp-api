@@ -277,38 +277,61 @@ async def create_compliance_recommendation(
     current_user: ValidatedUser = None,
     recommendation_service = Depends(get_compliance_recommendation_service)
 ) -> ComplianceRecommendationResponse:
-    
-    # Generate recommendation using the new service
-    recommendation_data = await recommendation_service.generate_gap_recommendation(
-        gap_id=request.gap_id,
-        user_id=current_user.id,
-        recommendation_type="comprehensive",
-        include_implementation_plan=True
-    )
-    
-    # Get gap details for response
-    gap_repo = get_compliance_gap_repository()
-    gap = await gap_repo.get_by_id(request.gap_id)
-    
-    if not gap:
-        raise HTTPException(status_code=404, detail="Compliance gap not found")
-    
-    # Convert to legacy response format (matching ComplianceRecommendationResponse schema)
+    # If a gap_id is provided, generate recommendation for the existing gap
+    if getattr(request, "gap_id", None):
+        gap_repo = get_compliance_gap_repository()
+        gap = await gap_repo.get_by_id(request.gap_id)
+
+        if not gap:
+            raise HTTPException(status_code=404, detail="Compliance gap not found")
+
+        recommendation_data = await recommendation_service.generate_gap_recommendation(
+            gap_id=request.gap_id,
+            user_id=current_user.id,
+            recommendation_type="comprehensive",
+            include_implementation_plan=True,
+        )
+
+        return ComplianceRecommendationResponse(
+            recommendation_text=recommendation_data.get("recommendation_text", ""),
+            recommendation_type="comprehensive",
+            chat_history_id=getattr(gap, "chat_history_id", 0) or 0,
+            audit_session_id=str(gap.audit_session_id),
+            compliance_domain=str(gap.compliance_domain),
+            generation_metadata={
+                "gap_id": request.gap_id,
+                "priority_level": recommendation_data.get("priority_level", "medium"),
+                "estimated_effort": recommendation_data.get("total_estimated_effort", "unknown"),
+                "implementation_phases": recommendation_data.get("implementation_phases", []),
+                "root_cause_analysis": recommendation_data.get("root_cause_analysis", ""),
+                "remediation_actions": recommendation_data.get("remediation_actions", []),
+                "service_version": "repository_pattern_v1",
+            },
+        )
+
+    # Otherwise, do not create a new compliance gap. Return an empty recommendation result.
+    chat = request.chat_history_item
+    try:
+        chat_id_int = int(chat.id) if chat and getattr(chat, "id", None) else 0
+    except Exception:
+        chat_id_int = 0
+
     return ComplianceRecommendationResponse(
-        recommendation_text=recommendation_data.get("recommendation_text", ""),
+        recommendation_text="",
         recommendation_type="comprehensive",
-        chat_history_id=0,  # Not applicable for gap-based recommendations
-        audit_session_id=gap.audit_session_id,
-        compliance_domain=gap.compliance_domain,
+        chat_history_id=chat_id_int,
+        audit_session_id=str(getattr(chat, "audit_session_id", "") or ""),
+        compliance_domain=str(getattr(chat, "compliance_domain", "") or ""),
         generation_metadata={
-            "gap_id": request.gap_id,
-            "priority_level": recommendation_data.get("priority_level", "medium"),
-            "estimated_effort": recommendation_data.get("total_estimated_effort", "unknown"),
-            "implementation_phases": recommendation_data.get("implementation_phases", []),
-            "root_cause_analysis": recommendation_data.get("root_cause_analysis", ""),
-            "remediation_actions": recommendation_data.get("remediation_actions", []),
-            "service_version": "repository_pattern_v1"
-        }
+            "gap_id": None,
+            "priority_level": "medium",
+            "estimated_effort": "unknown",
+            "implementation_phases": [],
+            "root_cause_analysis": "",
+            "remediation_actions": [],
+            "service_version": "repository_pattern_v1",
+            "note": "No gap_id provided; returning empty recommendation"
+        },
     )
 
 @router.post("/compliance-gaps/remediation-plan",
