@@ -20,7 +20,8 @@ dependencies = [
   "pgvector",
   "postgrest",
   "bleach",
-  "fastapi-decorators"
+  "fastapi-decorators",
+  "slowapi"
 ]
 
 [project.optional-dependencies]
