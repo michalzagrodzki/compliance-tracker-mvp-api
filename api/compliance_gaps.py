@@ -241,11 +241,49 @@ def update_existing_compliance_gap(
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def update_compliance_gap_status(
-    gap_id: str,
-    status_update: ComplianceGapStatusUpdate,
+    request: Request,
+    response: Response,
+    gap_id: str = Path(..., description="Compliance gap UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+    status_update: ComplianceGapStatusUpdate = Body(..., description="Status update data"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    return update_gap_status(gap_id=gap_id, new_status=status_update.status, resolution_notes=status_update.resolution_notes)
+    # NIST SP 800-53 SI-10: Input validation
+    ensure_json_request(request)
+    ua = normalize_user_agent(request.headers.get("user-agent"))
+    
+    # Extract status and resolution_notes with validation
+    if hasattr(status_update, "model_dump"):
+        payload = status_update.model_dump()
+    elif hasattr(status_update, "dict"):
+        payload = status_update.dict()
+    else:
+        payload = dict(status_update)
+    
+    # Idempotency protection for status updates
+    fingerprint = compute_fingerprint({"gap_id": gap_id, "operation": "status_update", **payload})
+    repo = request.app.state.idempotency_repo
+    cached = require_idempotency(repo, idempotency_key, fingerprint)
+    
+    if cached:
+        return cached["body"]
+    
+    # Perform status update
+    updated = update_gap_status(
+        gap_id=gap_id, 
+        new_status=status_update.status, 
+        resolution_notes=status_update.resolution_notes
+    )
+    
+    body = {"data": updated, "meta": {"message": "Compliance gap status updated", "user_agent": ua}}
+    
+    # Store idempotency result
+    store_idempotency(
+        repo, idempotency_key, fingerprint, 
+        {"body": body}, IDEMPOTENCY_TTL_SECONDS
+    )
+    
+    return body
 
 
 @router.put("/compliance-gaps/{gap_id}/assign",
@@ -256,11 +294,48 @@ def update_compliance_gap_status(
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def assign_compliance_gap(
-    gap_id: str,
-    assigned_user_id: str = Body(..., embed=True),
+    request: Request,
+    response: Response,
+    gap_id: str = Path(..., description="Compliance gap UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+    assigned_user_id: str = Body(..., embed=True, description="User ID to assign gap to"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    return assign_gap_to_user(gap_id=gap_id, assigned_to=assigned_user_id)
+    # NIST SP 800-53 SI-10: Input validation
+    ensure_json_request(request)
+    ua = normalize_user_agent(request.headers.get("user-agent"))
+    
+    # Validate assigned_user_id is not empty
+    if not assigned_user_id or not assigned_user_id.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="assigned_user_id cannot be empty"
+        )
+    
+    # Idempotency protection for assignment operations
+    fingerprint = compute_fingerprint({
+        "gap_id": gap_id, 
+        "operation": "assign", 
+        "assigned_user_id": assigned_user_id.strip()
+    })
+    repo = request.app.state.idempotency_repo
+    cached = require_idempotency(repo, idempotency_key, fingerprint)
+    
+    if cached:
+        return cached["body"]
+    
+    # Perform assignment
+    updated = assign_gap_to_user(gap_id=gap_id, assigned_to=assigned_user_id.strip())
+    
+    body = {"data": updated, "meta": {"message": "Compliance gap assigned", "user_agent": ua}}
+    
+    # Store idempotency result
+    store_idempotency(
+        repo, idempotency_key, fingerprint, 
+        {"body": body}, IDEMPOTENCY_TTL_SECONDS
+    )
+    
+    return body
 
 
 @router.put("/compliance-gaps/{gap_id}/review",
@@ -271,10 +346,40 @@ def assign_compliance_gap(
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def review_compliance_gap(
-    gap_id: str,
+    request: Request,
+    response: Response,
+    gap_id: str = Path(..., description="Compliance gap UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    return mark_gap_reviewed(gap_id=gap_id)
+    # NIST SP 800-53 SI-10: Input validation
+    ensure_json_request(request)
+    ua = normalize_user_agent(request.headers.get("user-agent"))
+    
+    # Idempotency protection for review operations
+    fingerprint = compute_fingerprint({
+        "gap_id": gap_id, 
+        "operation": "review", 
+        "reviewer_id": current_user.id if current_user else None
+    })
+    repo = request.app.state.idempotency_repo
+    cached = require_idempotency(repo, idempotency_key, fingerprint)
+    
+    if cached:
+        return cached["body"]
+    
+    # Perform review marking
+    updated = mark_gap_reviewed(gap_id=gap_id)
+    
+    body = {"data": updated, "meta": {"message": "Compliance gap marked as reviewed", "user_agent": ua}}
+    
+    # Store idempotency result
+    store_idempotency(
+        repo, idempotency_key, fingerprint, 
+        {"body": body}, IDEMPOTENCY_TTL_SECONDS
+    )
+    
+    return body
 
 @router.get("/compliance-domains/{domain_code}/gaps",
     summary="Get compliance gaps by domain",
