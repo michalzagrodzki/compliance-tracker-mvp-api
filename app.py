@@ -9,6 +9,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from config.config import settings, tags_metadata
 from config.cors import configure_cors
+from security.endpoint_validator import InMemoryIdempotencyRepo
 from security.input_validator import SecurityError
 from services.db_check import check_database_connection
 from auth.decorators import authorize
@@ -44,7 +45,7 @@ app = FastAPI(
     description="RAG service using Supabase vector store and OpenAI API",
     openapi_tags=tags_metadata,
 )
-
+app.state.idempotency_repo = InMemoryIdempotencyRepo()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)

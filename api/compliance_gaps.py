@@ -1,7 +1,9 @@
 from typing import Any, List, Dict, Optional, Union
-from fastapi import APIRouter, Query, Path, Body, Request, HTTPException, Depends
+from fastapi import APIRouter, Header, Query, Path, Body, Request, HTTPException, Depends, Response
 
 from auth.decorators import ValidatedUser, authorize
+from policies.compliance_gaps import ALLOWED_FIELDS_CREATE_DIRECT, ALLOWED_FIELDS_CREATE_FROM_CHAT
+from security.endpoint_validator import compute_fingerprint, require_idempotency, store_idempotency, normalize_user_agent, ensure_json_request
 from services.compliance_gaps import (
     list_compliance_gaps,
     list_compliance_gaps_by_compliance_domains,
@@ -25,6 +27,25 @@ from services.schemas import (
     ComplianceRecommendationRequest,
     ComplianceRecommendationResponse,
 )
+
+
+# --- constants / helpers ---
+IDEMPOTENCY_TTL_SECONDS = 24 * 3600
+ALLOWED_FIELDS_CREATE = {
+    # keep this list tightly scoped to what clients may set (OWASP API3:2023)
+    "creation_method",
+    "gap_type",
+    "gap_category",
+    "gap_title",
+    "gap_description",
+    "risk_level",
+    "business_impact",
+    "regulatory_requirement",
+    "potential_fine_amount",
+    "related_documents",
+    "search_terms_used",
+    "chat_history_id",  # only when creation_method == "from_chat_history"
+}
 
 router = APIRouter(tags=["Compliance Gaps"])
 
@@ -109,26 +130,46 @@ def get_compliance_gap(
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def create_new_compliance_gap(
     request: Request,
+    response: Response,
     request_data: Union[ComplianceGapCreate, ComplianceGapFromChatHistoryRequest] = Body(
         ...,
         discriminator="creation_method",
         description="Either a complete gap definition or a reference to chat history"
     ),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    ip_address = request.client.host if request.client else None
-    user_agent = request.headers.get("user-agent")
+    ensure_json_request(request)
+    ua = normalize_user_agent(request.headers.get("user-agent"))
 
-    # Normalize payload into a plain dict and enrich with context
-    payload = request_data.model_dump() if hasattr(request_data, "model_dump") else request_data.dict()
-    if current_user and getattr(current_user, "id", None):
-        payload["user_id"] = current_user.id
-    if ip_address:
-        payload["ip_address"] = ip_address
-    if user_agent:
-        payload["user_agent"] = user_agent
+    # Convert request data to dict for processing
+    if hasattr(request_data, "model_dump"):
+        payload = request_data.model_dump()
+    elif hasattr(request_data, "dict"):
+        payload = request_data.dict()
+    else:
+        payload = dict(request_data)
 
-    return create_compliance_gap(payload)
+    allowed = (ALLOWED_FIELDS_CREATE_FROM_CHAT if payload.get("creation_method") == "from_chat_history"
+           else ALLOWED_FIELDS_CREATE_DIRECT)
+    
+    payload = {k: v for k, v in payload.items() if k in allowed}
+    fingerprint = compute_fingerprint(payload)
+    repo = request.app.state.idempotency_repo
+    cached = require_idempotency(repo, idempotency_key, fingerprint)
+
+    if cached:
+        response.headers["Location"] = cached.get("location", "")
+        return cached["body"]
+    
+    created = create_compliance_gap(payload | {"user_agent": ua})
+    location = f"/v1/compliance-gaps/{created['id']}"
+    body = {"data": created, "meta": {"message": "Compliance gap created"}}
+
+    store_idempotency(repo, idempotency_key, fingerprint, {"body": body, "location": location}, IDEMPOTENCY_TTL_SECONDS)
+
+    response.headers["Location"] = location
+    return body
 
 
 @router.patch("/compliance-gaps/{gap_id}",
