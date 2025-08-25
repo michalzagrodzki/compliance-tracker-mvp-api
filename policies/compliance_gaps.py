@@ -27,4 +27,12 @@ ALLOWED_FIELDS_CREATE_DIRECT: Set[str] = {
     "session_context", "iso_control", "assigned_to", "due_date",
 }
 
+# Update operations should be more restrictive than create operations
+ALLOWED_FIELDS_UPDATE: Set[str] = {
+    "gap_title", "gap_description", "risk_level", "business_impact",
+    "regulatory_requirement", "potential_fine_amount", "related_documents",
+    "recommendation_text", "recommended_actions", "assigned_to", "due_date",
+    "resolution_notes", "iso_control", "confidence_score"
+}
+
 ALLOWED_FIELDS_CREATE = ALLOWED_FIELDS_CREATE_FROM_CHAT | ALLOWED_FIELDS_CREATE_DIRECT

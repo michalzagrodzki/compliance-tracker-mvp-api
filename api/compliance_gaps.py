@@ -2,7 +2,7 @@ from typing import Any, List, Dict, Optional, Union
 from fastapi import APIRouter, Header, Query, Path, Body, Request, HTTPException, Depends, Response
 
 from auth.decorators import ValidatedUser, authorize
-from policies.compliance_gaps import ALLOWED_FIELDS_CREATE_DIRECT, ALLOWED_FIELDS_CREATE_FROM_CHAT
+from policies.compliance_gaps import ALLOWED_FIELDS_CREATE_DIRECT, ALLOWED_FIELDS_CREATE_FROM_CHAT, ALLOWED_FIELDS_UPDATE
 from security.endpoint_validator import compute_fingerprint, require_idempotency, store_idempotency, normalize_user_agent, ensure_json_request
 from services.compliance_gaps import (
     list_compliance_gaps,
@@ -180,12 +180,57 @@ def create_new_compliance_gap(
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def update_existing_compliance_gap(
-    gap_id: str,
-    gap_update: ComplianceGapUpdate,
+    request: Request,
+    response: Response,
+    gap_id: str = Path(..., description="Compliance gap UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+    gap_update: ComplianceGapUpdate = Body(..., description="Gap update data"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    update_data = gap_update.model_dump(exclude_unset=True) if hasattr(gap_update, "model_dump") else gap_update.dict(exclude_unset=True)
-    return update_compliance_gap(gap_id=gap_id, update_data=update_data)
+    # NIST SP 800-53 SI-10: Input validation
+    ensure_json_request(request)
+    ua = normalize_user_agent(request.headers.get("user-agent"))
+    
+    # Convert and filter payload to allowed fields only (OWASP API3:2023)
+    if hasattr(gap_update, "model_dump"):
+        payload = gap_update.model_dump(exclude_unset=True)
+    elif hasattr(gap_update, "dict"):
+        payload = gap_update.dict(exclude_unset=True)
+    else:
+        payload = dict(gap_update)
+    
+    # Filter payload to only allowed update fields
+    filtered_payload = {k: v for k, v in payload.items() if k in ALLOWED_FIELDS_UPDATE}
+    
+    if not filtered_payload:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid update fields provided"
+        )
+    
+    # Idempotency protection for update operations
+    fingerprint = compute_fingerprint({"gap_id": gap_id, **filtered_payload})
+    repo = request.app.state.idempotency_repo
+    cached = require_idempotency(repo, idempotency_key, fingerprint)
+    
+    if cached:
+        return cached["body"]
+    
+    # Perform update with filtered data
+    updated = update_compliance_gap(
+        gap_id=gap_id, 
+        update_data=filtered_payload | {"user_agent": ua}
+    )
+    
+    body = {"data": updated, "meta": {"message": "Compliance gap updated"}}
+    
+    # Store idempotency result
+    store_idempotency(
+        repo, idempotency_key, fingerprint, 
+        {"body": body}, IDEMPOTENCY_TTL_SECONDS
+    )
+    
+    return body
 
 
 @router.put("/compliance-gaps/{gap_id}/status",
