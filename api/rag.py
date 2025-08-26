@@ -41,26 +41,79 @@ ALLOWED_QUERY_FIELDS = {
     description="Retrieval-Augmented Generation over ingested documents with full audit trail logging."
 )
 @limiter.limit("10/minute")
-@authorize(domains=["ISO27001"], allowed_roles=["admin", "compliance_officer"], check_active=True)
 async def query_qa(
     req: QueryRequest,
     request: Request,
+    response: Response,
     rag_service: RAGServiceDep,
-    current_user: ValidatedUser = None
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False)
 ) -> QueryResponse:
+    """
+    Secure Q&A endpoint with comprehensive input validation,
+    idempotency protection, and audit trail compliance.
+    """
     try:
+        # Authentication and authorization
+        current_user = authenticate_and_authorize(
+            request=request,
+            allowed_roles=["admin", "compliance_officer"],
+            domains=["ISO27001"],
+            check_active=True,
+        )
+
+        # NIST SP 800-53 SI-10: Input validation and sanitization
+        ensure_json_request(request)
         validated_req = validate_and_secure_query_request(req, request)
+        ua = normalize_user_agent(request.headers.get("user-agent"))
+        
         start_time = time.time()
         
         # Extract client information for audit trail
         ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
         
+        # Convert request data to dict for field filtering (OWASP API3:2023)
+        if hasattr(req, "model_dump"):
+            payload = req.model_dump()
+        elif hasattr(req, "dict"):
+            payload = req.dict()
+        else:
+            payload = dict(req)
+        
+        # Filter to allowed fields only
+        filtered_payload = {k: v for k, v in payload.items() if k in ALLOWED_QUERY_FIELDS}
+        
+        # Parameter validation
+        match_threshold = float(filtered_payload.get("match_threshold", 0.75))
+        if not (0.0 <= match_threshold <= 1.0):
+            raise HTTPException(400, "match_threshold must be between 0.0 and 1.0")
+
+        match_count = int(filtered_payload.get("match_count", 5))
+        if not (1 <= match_count <= 10):
+            raise HTTPException(400, "match_count must be between 1 and 10")
+
+        # UUID validation for conversation_id
+        conversation_id = filtered_payload.get("conversation_id")
+        if conversation_id:
+            try:
+                uuid.UUID(conversation_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid conversation_id format (must be UUID)")
+        else:
+            conversation_id = str(uuid.uuid4())
+        
+        # UUID validation for audit_session_id if provided
+        audit_session_id = filtered_payload.get("audit_session_id")
+        if audit_session_id:
+            try:
+                uuid.UUID(audit_session_id)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid audit_session_id format (must be UUID)")
+
         # Validate audit session if provided
         audit_session_data = None
-        if req.audit_session_id:
+        if audit_session_id:
             try:
-                audit_session_data = get_audit_session_by_id(req.audit_session_id)
+                audit_session_data = get_audit_session_by_id(audit_session_id)
                 if not audit_session_data.get("is_active", False):
                     raise HTTPException(status_code=400, detail="Audit session is not active")
             except HTTPException as e:
@@ -72,59 +125,106 @@ async def query_qa(
         compliance_domain = None
         if audit_session_data:
             compliance_domain = audit_session_data.get("compliance_domain")
-        elif hasattr(req, 'compliance_domain') and req.compliance_domain:
-            compliance_domain = req.compliance_domain
+        elif filtered_payload.get('compliance_domain'):
+            compliance_domain = filtered_payload['compliance_domain']
 
-        conversation_id = req.conversation_id or str(uuid.uuid4())
+        # Idempotency protection for query operations
+        query_fingerprint = stable_fingerprint({
+            "operation": "query",
+            "user_id": current_user.id if current_user else None,
+            "conversation_id": conversation_id,
+            "question_hash": validated_req.question,
+            "compliance_domain": compliance_domain,
+            "audit_session_id": audit_session_id,
+            "match_threshold": match_threshold,
+            "match_count": match_count
+        })
+        
+        repo = request.app.state.idempotency_repo
+        cached = require_idempotency(repo, idempotency_key, query_fingerprint)
+        
+        if cached:
+            # Return cached response
+            cached_response = cached.get("body", {})
+            if "data" in cached_response:
+                return QueryResponse(**cached_response["data"])
+            return cached_response
 
-        # Use RAG service to answer question
+        # Use RAG service to answer question with filtered parameters
         answer, source_docs, metadata = await rag_service.answer_question(
             question=validated_req.question,
-            user_id=current_user.id,
-            match_threshold=validated_req.match_threshold,
-            match_count=validated_req.match_count,
+            user_id=current_user.id if current_user else None,
+            match_threshold=match_threshold,
+            match_count=match_count,
             compliance_domain=compliance_domain,
-            document_versions=getattr(req, 'document_versions', None),
-            document_tags=getattr(req, 'document_tags', None),
+            document_versions=filtered_payload.get('document_versions'),
+            document_tags=filtered_payload.get('document_tags'),
             conversation_id=conversation_id,
-            audit_session_id=req.audit_session_id,
+            audit_session_id=audit_session_id,
             ip_address=ip_address,
-            user_agent=user_agent
+            user_agent=ua
         )
         
         end_time = time.time()
         response_time_ms = int((end_time - start_time) * 1000)
         
         # Update audit session query count
-        if req.audit_session_id and audit_session_data:
+        if audit_session_id and audit_session_data:
             try:
                 current_count = audit_session_data.get("total_queries", 0)
                 update_audit_session(
-                    session_id=req.audit_session_id,
+                    session_id=audit_session_id,
                     total_queries=current_count + 1
                 )
             except Exception as e:
                 logging.warning(f"Failed to update audit session query count: {e}")
+
+        # Create response
+        response_data = QueryResponse(
+            answer=answer,
+            source_docs=source_docs,
+            conversation_id=conversation_id,
+            audit_session_id=audit_session_id,
+            compliance_domain=compliance_domain,
+            response_time_ms=response_time_ms,
+            metadata=metadata
+        )
+
+        # Store successful operation for idempotency
+        if idempotency_key:
+            store_idempotency(
+                repo, 
+                idempotency_key, 
+                query_fingerprint,
+                {"data": response_data.model_dump()},
+                IDEMPOTENCY_TTL_SECONDS
+            )
+
+        # Set security response headers
+        response.headers.update({
+            "x-conversation-id": conversation_id,
+            "x-audit-session-id": audit_session_id or "",
+            "x-compliance-domain": compliance_domain or "",
+            "x-content-type-options": "nosniff",
+            "cache-control": "no-cache, no-store, must-revalidate",
+            "pragma": "no-cache",
+            "expires": "0"
+        })
+
+        return response_data
     
     except ValidationException as e:
+        logging.warning(f"Request validation failed: {e.detail}")
         raise HTTPException(status_code=400, detail=e.detail)
     except AuthorizationException as e:
+        logging.warning(f"Authorization failed: {e.detail}")
         raise HTTPException(status_code=403, detail=e.detail)
     except BusinessLogicException as e:
+        logging.warning(f"Business logic error: {e.detail}")
         raise HTTPException(status_code=500, detail=e.detail)
     except Exception as e:
         logging.error(f"Unexpected error in query endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="An unexpected error occurred while processing your request")
-
-    return QueryResponse(
-        answer=answer,
-        source_docs=source_docs,
-        conversation_id=conversation_id,
-        audit_session_id=req.audit_session_id,
-        compliance_domain=compliance_domain,
-        response_time_ms=response_time_ms,
-        metadata=metadata
-    )
 
 
 @router.post("/query-stream",
