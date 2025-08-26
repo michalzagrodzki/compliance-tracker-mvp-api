@@ -24,6 +24,14 @@ ALLOWED_FIELDS_CREATE = {
     "session_name",
     "compliance_domain"
 }
+ALLOWED_FIELDS_UPDATE = {
+    # keep this list tightly scoped to what clients may update (OWASP API3:2023)
+    "session_name",
+    "session_summary",
+    "audit_report",
+    "is_active",
+    "ended_at"
+}
 
 router = APIRouter(prefix="/audit-sessions", tags=["Audit Sessions"])
 
@@ -300,11 +308,15 @@ async def get_audit_sessions_by_compliance_domain(
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 async def search_audit_sessions_endpoint(
+    request: Request,
     search_request: AuditSessionSearchRequest,
     audit_session_service: AuditSessionServiceDep = None,
     current_user: ValidatedUser = None
 ) -> List[AuditSessionResponse]:
     """Search audit sessions."""
+    # NIST SP 800-53 SI-10: Input validation
+    ensure_json_request(request)
+    
     try:
         # Search sessions using service
         sessions = await audit_session_service.search_sessions(
@@ -454,29 +466,59 @@ async def create_new_audit_session(
 @router.patch("/{session_id}",
     summary="Update audit session",
     description="Updates an existing audit session with new information and access control.",
-    response_model=AuditSessionResponse
+    response_model=Dict[str, Any]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 async def update_existing_audit_session(
-    session_id: str,
-    session_update: SchemaAuditSessionUpdate,
     request: Request,
+    response: Response,
+    session_id: str = Path(..., description="Audit session UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+    session_update: SchemaAuditSessionUpdate = Body(..., description="Audit session update data"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     audit_session_service: AuditSessionServiceDep = None,
     current_user: ValidatedUser = None
-) -> AuditSessionResponse:
+) -> Dict[str, Any]:
     """Update existing audit session."""
+    # NIST SP 800-53 SI-10: Input validation
+    ensure_json_request(request)
+    ua = normalize_user_agent(request.headers.get("user-agent"))
+    
     try:
         # Extract client information for audit trail
         ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
         
-        # Convert schema to entity
+        # Convert and filter payload to allowed fields only (OWASP API3:2023)
+        if hasattr(session_update, "model_dump"):
+            payload = session_update.model_dump(exclude_unset=True)
+        elif hasattr(session_update, "dict"):
+            payload = session_update.dict(exclude_unset=True)
+        else:
+            payload = dict(session_update)
+        
+        # Filter payload to only allowed update fields
+        filtered_payload = {k: v for k, v in payload.items() if k in ALLOWED_FIELDS_UPDATE}
+        
+        if not filtered_payload:
+            raise HTTPException(
+                status_code=400,
+                detail="No valid update fields provided"
+            )
+        
+        # Idempotency protection for update operations
+        fingerprint = compute_fingerprint({"session_id": session_id, **filtered_payload})
+        repo = request.app.state.idempotency_repo
+        cached = require_idempotency(repo, idempotency_key, fingerprint)
+        
+        if cached:
+            return cached["body"]
+        
+        # Convert to entity with filtered data
         update_data = AuditSessionUpdate(
-            session_name=session_update.session_name,
-            session_summary=session_update.session_summary,
-            audit_report=session_update.audit_report,
-            is_active=session_update.is_active,
-            ended_at=session_update.ended_at
+            session_name=filtered_payload.get("session_name"),
+            session_summary=filtered_payload.get("session_summary"),
+            audit_report=filtered_payload.get("audit_report"),
+            is_active=filtered_payload.get("is_active"),
+            ended_at=filtered_payload.get("ended_at")
         )
         
         # Update session using service
@@ -485,11 +527,11 @@ async def update_existing_audit_session(
             update_data=update_data,
             user_id=current_user.id,
             ip_address=ip_address,
-            user_agent=user_agent
+            user_agent=ua
         )
         
-        # Convert to response model
-        return AuditSessionResponse(
+        # Prepare structured response
+        session_response = AuditSessionResponse(
             id=updated_session.id,
             user_id=updated_session.user_id,
             session_name=updated_session.session_name,
@@ -505,6 +547,16 @@ async def update_existing_audit_session(
             created_at=updated_session.created_at,
             updated_at=updated_session.updated_at
         )
+        
+        body = {"data": session_response.model_dump(), "meta": {"message": "Audit session updated"}}
+        
+        # Store idempotency result
+        store_idempotency(
+            repo, idempotency_key, fingerprint,
+            {"body": body}, IDEMPOTENCY_TTL_SECONDS
+        )
+        
+        return body
         
     except ValidationException as e:
         raise HTTPException(status_code=400, detail=e.detail)
@@ -559,27 +611,44 @@ async def delete_audit_session(
 @router.put("/{session_id}/activate",
     summary="Activate audit session",
     description="Activate a closed audit session.",
-    response_model=AuditSessionResponse
+    response_model=Dict[str, Any]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 async def activate_audit_session(
     request: Request,
-    session_id: str,
+    response: Response,
+    session_id: str = Path(..., description="Audit session UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     audit_session_service: AuditSessionServiceDep = None,
     current_user: ValidatedUser = None
-) -> AuditSessionResponse:
+) -> Dict[str, Any]:
+    # NIST SP 800-53 SI-10: Input validation
+    ensure_json_request(request)
+    ua = normalize_user_agent(request.headers.get("user-agent"))
+    
     try:
         ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
+        
+        # Idempotency protection for activation operations
+        fingerprint = compute_fingerprint({
+            "session_id": session_id,
+            "operation": "activate",
+            "user_id": current_user.id
+        })
+        repo = request.app.state.idempotency_repo
+        cached = require_idempotency(repo, idempotency_key, fingerprint)
+        
+        if cached:
+            return cached["body"]
         
         opened_session = await audit_session_service.open_session(
             session_id=session_id,
             user_id=current_user.id,
             ip_address=ip_address,
-            user_agent=user_agent
+            user_agent=ua
         )
         
-        return AuditSessionResponse(
+        session_response = AuditSessionResponse(
             id=opened_session.id,
             user_id=opened_session.user_id,
             session_name=opened_session.session_name,
@@ -596,6 +665,16 @@ async def activate_audit_session(
             updated_at=opened_session.updated_at
         )
         
+        body = {"data": session_response.model_dump(), "meta": {"message": "Audit session activated", "user_agent": ua}}
+        
+        # Store idempotency result
+        store_idempotency(
+            repo, idempotency_key, fingerprint,
+            {"body": body}, IDEMPOTENCY_TTL_SECONDS
+        )
+        
+        return body
+        
     except ValidationException as e:
         raise HTTPException(status_code=400, detail=e.detail)
     except AuthorizationException as e:
@@ -607,33 +686,58 @@ async def activate_audit_session(
 @router.put("/{session_id}/close",
     summary="Close audit session",
     description="Close an active audit session with optional summary.",
-    response_model=AuditSessionResponse
+    response_model=Dict[str, Any]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 async def close_audit_session(
     request: Request,
-    session_id: str,
-    summary: Optional[str] = None,
+    response: Response,
+    session_id: str = Path(..., description="Audit session UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+    summary: Optional[str] = Body(None, embed=True, description="Session summary"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     audit_session_service: AuditSessionServiceDep = None,
     current_user: ValidatedUser = None
-) -> AuditSessionResponse:
+) -> Dict[str, Any]:
     """Close audit session."""
+    # NIST SP 800-53 SI-10: Input validation
+    ensure_json_request(request)
+    ua = normalize_user_agent(request.headers.get("user-agent"))
+    
     try:
         # Extract client information for audit trail
         ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
+        
+        # Validate summary if provided
+        if summary and not summary.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="summary cannot be empty if provided"
+            )
+        
+        # Idempotency protection for close operations
+        fingerprint = compute_fingerprint({
+            "session_id": session_id,
+            "operation": "close",
+            "summary": summary,
+            "user_id": current_user.id
+        })
+        repo = request.app.state.idempotency_repo
+        cached = require_idempotency(repo, idempotency_key, fingerprint)
+        
+        if cached:
+            return cached["body"]
         
         # Close session using service
         closed_session = await audit_session_service.close_session(
             session_id=session_id,
             user_id=current_user.id,
-            session_summary=summary,
+            session_summary=summary.strip() if summary else None,
             ip_address=ip_address,
-            user_agent=user_agent
+            user_agent=ua
         )
         
         # Convert to response model
-        return AuditSessionResponse(
+        session_response = AuditSessionResponse(
             id=closed_session.id,
             user_id=closed_session.user_id,
             session_name=closed_session.session_name,
@@ -649,6 +753,16 @@ async def close_audit_session(
             created_at=closed_session.created_at,
             updated_at=closed_session.updated_at
         )
+        
+        body = {"data": session_response.model_dump(), "meta": {"message": "Audit session closed", "user_agent": ua}}
+        
+        # Store idempotency result
+        store_idempotency(
+            repo, idempotency_key, fingerprint,
+            {"body": body}, IDEMPOTENCY_TTL_SECONDS
+        )
+        
+        return body
         
     except ValidationException as e:
         raise HTTPException(status_code=400, detail=e.detail)
