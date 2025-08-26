@@ -1,5 +1,7 @@
 from typing import Any, List, Dict, Optional, Union
 from fastapi import APIRouter, Header, Query, Path, Body, Request, HTTPException, Depends, Response
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from auth.decorators import ValidatedUser, authorize
 from policies.compliance_gaps import ALLOWED_FIELDS_CREATE_DIRECT, ALLOWED_FIELDS_CREATE_FROM_CHAT, ALLOWED_FIELDS_UPDATE
@@ -48,6 +50,7 @@ ALLOWED_FIELDS_CREATE = {
 }
 
 router = APIRouter(tags=["Compliance Gaps"])
+limiter = Limiter(key_func=get_remote_address)
 
 @router.get("/compliance-gaps",
     summary="List compliance gaps with filtering",
@@ -462,22 +465,23 @@ def get_compliance_gap_statistics(
     description="Generate AI-powered recommendations for addressing a compliance gap",
     tags=["Compliance Gaps"]
 )
+@limiter.limit("10/minute")
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 async def create_compliance_recommendation(
-    request: ComplianceRecommendationRequest,
+    request_data: ComplianceRecommendationRequest,
+    request: Request,
     current_user: ValidatedUser = None,
     recommendation_service = Depends(get_compliance_recommendation_service)
 ) -> ComplianceRecommendationResponse:
-    # If a gap_id is provided, generate recommendation for the existing gap
-    if getattr(request, "gap_id", None):
+    if getattr(request_data, "gap_id", None):
         gap_repo = get_compliance_gap_repository()
-        gap = await gap_repo.get_by_id(request.gap_id)
+        gap = await gap_repo.get_by_id(request_data.gap_id)
 
         if not gap:
             raise HTTPException(status_code=404, detail="Compliance gap not found")
 
         recommendation_data = await recommendation_service.generate_gap_recommendation(
-            gap_id=request.gap_id,
+            gap_id=request_data.gap_id,
             user_id=current_user.id,
             recommendation_type="comprehensive",
             include_implementation_plan=True,
@@ -490,7 +494,7 @@ async def create_compliance_recommendation(
             audit_session_id=str(gap.audit_session_id),
             compliance_domain=str(gap.compliance_domain),
             generation_metadata={
-                "gap_id": request.gap_id,
+                "gap_id": request_data.gap_id,
                 "priority_level": recommendation_data.get("priority_level", "medium"),
                 "estimated_effort": recommendation_data.get("total_estimated_effort", "unknown"),
                 "implementation_phases": recommendation_data.get("implementation_phases", []),
@@ -501,7 +505,7 @@ async def create_compliance_recommendation(
         )
 
     # Otherwise, do not create a new compliance gap. Return an empty recommendation result.
-    chat = request.chat_history_item
+    chat = request_data.chat_history_item
     try:
         chat_id_int = int(chat.id) if chat and getattr(chat, "id", None) else 0
     except Exception:
