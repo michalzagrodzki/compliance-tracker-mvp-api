@@ -1,6 +1,7 @@
 import re
 import logging
 from typing import List, Optional
+import unicodedata
 import bleach
 from fastapi import HTTPException
 from pydantic import validator
@@ -9,6 +10,29 @@ logger = logging.getLogger(__name__)
 
 class SecurityError(Exception):
     pass
+
+SECRET_PATS = [
+    re.compile(r'\bsk-[A-Za-z0-9]{20,}\b'),              # generic "sk-" keys
+    re.compile(r'\bAKIA[0-9A-Z]{16}\b'),                 # AWS access key
+    re.compile(r'\bAIza[0-9A-Za-z\-_]{35}\b'),           # Google API key
+    re.compile(r'\b\d{16}\b'),                           # naive card (tighten in prod)
+    re.compile(r'\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b', re.I),  # emails
+]
+
+def redact(text: str) -> str:
+    for pat in SECRET_PATS:
+        text = pat.sub("[redacted]", text)
+    return text
+
+def safe_stream(upstream_iter):
+    TAIL = 96
+    tail = ""
+    for chunk in upstream_iter:
+        chunk = str(chunk).replace("\x00", "")
+        merged = tail + chunk
+        redacted = redact(merged)
+        yield redacted[len(tail):]
+        tail = redacted[-TAIL:]
 
 class InputValidator:
     BLOCKED_PATTERNS = [
@@ -43,6 +67,11 @@ class InputValidator:
         r'simulate\s+being',
     ]
     
+    INVIS = {0x200B: None, 0x200C: None, 0x200D: None, 0x2060: None, 0xFEFF: None}  # ZWSP/ZWNJ/ZWJ/WJ/BOM
+    
+    def strip_invisible(s: str) -> str:
+        return s.translate(InputValidator.INVIS)
+
     @staticmethod
     def sanitize_text(text: str, max_length: Optional[int] = None) -> str:
         if not isinstance(text, str):
@@ -51,6 +80,9 @@ class InputValidator:
         if max_length and len(text) > max_length:
             raise SecurityError(f"Input exceeds maximum length of {max_length}")
         
+        text = unicodedata.normalize("NFKC", text)
+        text = InputValidator.strip_invisible(text)
+
         cleaned_text = bleach.clean(
             text,
             tags=[],
@@ -176,8 +208,11 @@ def validate_and_secure_query_request(req: QueryRequest, request: Request) -> Qu
         if req.user_id:
             req.user_id = InputValidator.sanitize_text(req.user_id, 100)
 
-        if req.document_version:
-            req.document_version = InputValidator.sanitize_text(req.document_version, 50)
+        if req.document_versions:
+            if isinstance(req.document_versions, list):
+                req.document_versions = [InputValidator.sanitize_text(version, 50) for version in req.document_versions]
+            else:
+                req.document_versions = [InputValidator.sanitize_text(req.document_versions, 50)]
 
         if req.document_tags:
             req.document_tags = InputValidator.validate_tags(req.document_tags)

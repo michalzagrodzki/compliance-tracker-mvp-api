@@ -1,11 +1,37 @@
 # core/security_utils.py
 from __future__ import annotations
+from decimal import Decimal
 from typing import Optional, Dict, Any, Protocol
 from datetime import datetime, timedelta
 from fastapi import HTTPException, Request
-import hashlib, json
+import hashlib, json, unicodedata, uuid, datetime
 
 MAX_USER_AGENT_LEN = 256
+
+def _normalize_for_fingerprint(o):
+    if isinstance(o, str):
+        # Normalize and trim, but DO NOT collapse internal whitespace by default
+        return unicodedata.normalize("NFKC", o).strip()
+    if isinstance(o, (int, float, bool)) or o is None:
+        return o
+    if isinstance(o, Decimal):
+        # Prefer str to avoid float rounding artifacts
+        return str(o)
+    if isinstance(o, (datetime.datetime, datetime.date)):
+        return o.isoformat()
+    if isinstance(o, uuid.UUID):
+        return str(o)
+    if isinstance(o, dict):
+        # Ensure string keys; sort for stability
+        return {str(k): _normalize_for_fingerprint(v) for k, v in sorted(o.items(), key=lambda kv: str(kv[0]))}
+    if isinstance(o, (list, tuple)):
+        return [_normalize_for_fingerprint(x) for x in o]
+    return str(o)
+
+def stable_fingerprint(obj: dict) -> str:
+    payload = json.dumps(_normalize_for_fingerprint(obj),
+                         sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 def normalize_user_agent(ua: Optional[str]) -> Optional[str]:
     if not ua:
