@@ -1,7 +1,8 @@
-from typing import Any, List, Dict, Optional
-from fastapi import APIRouter, Query, Path, Request, HTTPException
+from typing import Any, List, Dict, Optional, Union
+from fastapi import APIRouter, Query, Path, Request, HTTPException, Body, Header, Response
 
 from auth.decorators import ValidatedUser, authorize
+from security.endpoint_validator import compute_fingerprint, require_idempotency, store_idempotency, normalize_user_agent, ensure_json_request
 from dependencies import AuditSessionServiceDep
 from entities.audit_session import (
     AuditSessionCreate,
@@ -16,8 +17,15 @@ from services.schemas import (
 )
 from common.exceptions import ValidationException, AuthorizationException, BusinessLogicException
 
-router = APIRouter(prefix="/audit-sessions", tags=["Audit Sessions"])
+# --- constants / helpers ---
+IDEMPOTENCY_TTL_SECONDS = 24 * 3600
+ALLOWED_FIELDS_CREATE = {
+    # keep this list tightly scoped to what clients may set (OWASP API3:2023)
+    "session_name",
+    "compliance_domain"
+}
 
+router = APIRouter(prefix="/audit-sessions", tags=["Audit Sessions"])
 
 @router.get("",
     summary="List all audit sessions with pagination",
@@ -340,29 +348,64 @@ async def search_audit_sessions_endpoint(
 @router.post("",
     summary="Create new audit session",
     description="Creates a new audit session with the provided details and access control.",
-    response_model=AuditSessionResponse,
+    response_model=Dict[str, Any],
     status_code=201
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 async def create_new_audit_session(
-    session_data: SchemaAuditSessionCreate,
     request: Request,
+    response: Response,
+    session_data: SchemaAuditSessionCreate = Body(
+        ...,
+        description="Audit session creation data"
+    ),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     audit_session_service: AuditSessionServiceDep = None,
     current_user: ValidatedUser = None
-) -> AuditSessionResponse:
+) -> Dict[str, Any]:
     """Create new audit session."""
+    # NIST SP 800-53 SI-10: Input validation
+    ensure_json_request(request)
+    ua = normalize_user_agent(request.headers.get("user-agent"))
+    
     try:
         # Extract client information for audit trail
         ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
         
-        # Convert schema to entity
+        # Convert request data to dict for processing
+        if hasattr(session_data, "model_dump"):
+            payload = session_data.model_dump()
+        elif hasattr(session_data, "dict"):
+            payload = session_data.dict()
+        else:
+            payload = dict(session_data)
+        
+        # Filter payload to only allowed create fields (OWASP API3:2023)
+        payload = {k: v for k, v in payload.items() if k in ALLOWED_FIELDS_CREATE}
+        
+        # Validate required fields are present
+        if not payload.get("session_name") or not payload.get("compliance_domain"):
+            raise HTTPException(
+                status_code=400,
+                detail="session_name and compliance_domain are required"
+            )
+        
+        # Idempotency protection for create operations
+        fingerprint = compute_fingerprint(payload | {"user_id": current_user.id})
+        repo = request.app.state.idempotency_repo
+        cached = require_idempotency(repo, idempotency_key, fingerprint)
+        
+        if cached:
+            response.headers["Location"] = cached.get("location", "")
+            return cached["body"]
+        
+        # Convert to entity with sanitized data
         session_create = AuditSessionCreate(
             user_id=current_user.id,  # Use authenticated user's ID
-            session_name=session_data.session_name,
-            compliance_domain=session_data.compliance_domain,
+            session_name=payload["session_name"],
+            compliance_domain=payload["compliance_domain"],
             ip_address=ip_address,
-            user_agent=user_agent
+            user_agent=ua
         )
         
         # Create session using service
@@ -370,11 +413,11 @@ async def create_new_audit_session(
             session_create=session_create,
             user_id=current_user.id,
             ip_address=ip_address,
-            user_agent=user_agent
+            user_agent=ua
         )
         
-        # Convert to response model
-        return AuditSessionResponse(
+        # Prepare structured response
+        session_response = AuditSessionResponse(
             id=created_session.id,
             user_id=created_session.user_id,
             session_name=created_session.session_name,
@@ -390,6 +433,15 @@ async def create_new_audit_session(
             created_at=created_session.created_at,
             updated_at=created_session.updated_at
         )
+        
+        location = f"/v1/audit-sessions/{created_session.id}"
+        body = {"data": session_response.model_dump(), "meta": {"message": "Audit session created"}}
+        
+        # Store idempotency result
+        store_idempotency(repo, idempotency_key, fingerprint, {"body": body, "location": location}, IDEMPOTENCY_TTL_SECONDS)
+        
+        response.headers["Location"] = location
+        return body
         
     except ValidationException as e:
         raise HTTPException(status_code=400, detail=e.detail)
