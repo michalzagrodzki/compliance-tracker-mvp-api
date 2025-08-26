@@ -1,5 +1,7 @@
 import time
 from fastapi import APIRouter, Request, HTTPException
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from auth.decorators import ValidatedUser, authorize
 from services.audit_log import create_audit_log
@@ -8,6 +10,7 @@ from services.schemas import ThreatIntelligenceRequest, ThreatIntelligenceRespon
 from config.config import settings
 
 router = APIRouter(prefix="/audit-reports/threat-intelligence", tags=["Audit Reports"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("",
@@ -15,9 +18,10 @@ router = APIRouter(prefix="/audit-reports/threat-intelligence", tags=["Audit Rep
     summary="Generate threat intelligence analysis from audit report and compliance gaps",
     description="Creates a professional threat intelligence analysis using OpenAI API based on audit report data and identified compliance gaps. Returns formatted markdown suitable for security teams and executives."
 )
+@limiter.limit("10/minute")
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def create_threat_intelligence_analysis(
-    req: ThreatIntelligenceRequest,
+    request_data: ThreatIntelligenceRequest,
     request: Request,
     current_user: ValidatedUser = None
 ) -> ThreatIntelligenceResponse:
@@ -27,11 +31,11 @@ def create_threat_intelligence_analysis(
     user_agent = request.headers.get("user-agent")
 
     # Validate that compliance gaps match the audit session
-    if req.audit_report.audit_session_id != req.compliance_gaps[0].audit_session_id if req.compliance_gaps else True:
-        if req.compliance_gaps:
+    if request_data.audit_report.audit_session_id != request_data.compliance_gaps[0].audit_session_id if request_data.compliance_gaps else True:
+        if request_data.compliance_gaps:
             mismatched_gaps = [
-                gap for gap in req.compliance_gaps 
-                if gap.audit_session_id != req.audit_report.audit_session_id
+                gap for gap in request_data.compliance_gaps 
+                if gap.audit_session_id != request_data.audit_report.audit_session_id
             ]
             if mismatched_gaps:
                 raise HTTPException(
@@ -39,8 +43,8 @@ def create_threat_intelligence_analysis(
                     detail=f"Found {len(mismatched_gaps)} compliance gaps with mismatched audit_session_id"
                 )
 
-    audit_report_dict = req.audit_report.model_dump()
-    compliance_gaps_list = [gap.model_dump() for gap in req.compliance_gaps]
+    audit_report_dict = request_data.audit_report.model_dump()
+    compliance_gaps_list = [gap.model_dump() for gap in request_data.compliance_gaps]
 
     try:
         threat_analysis = generate_threat_intelligence(
@@ -59,11 +63,11 @@ def create_threat_intelligence_analysis(
     response_time_ms = int((end_time - start_time) * 1000)
 
     # Calculate gap statistics
-    total_gaps = len(req.compliance_gaps)
-    high_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == 'high'])
-    medium_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == 'medium'])
-    low_risk_gaps = len([gap for gap in req.compliance_gaps if gap.risk_level == 'low'])
-    regulatory_gaps = len([gap for gap in req.compliance_gaps if gap.regulatory_requirement])
+    total_gaps = len(request_data.compliance_gaps)
+    high_risk_gaps = len([gap for gap in request_data.compliance_gaps if gap.risk_level == 'high'])
+    medium_risk_gaps = len([gap for gap in request_data.compliance_gaps if gap.risk_level == 'medium'])
+    low_risk_gaps = len([gap for gap in request_data.compliance_gaps if gap.risk_level == 'low'])
+    regulatory_gaps = len([gap for gap in request_data.compliance_gaps if gap.regulatory_requirement])
 
     generation_metadata = {
         "generation_time_ms": response_time_ms,
@@ -71,21 +75,21 @@ def create_threat_intelligence_analysis(
         "ip_address": ip_address,
         "user_agent": user_agent,
         "openai_model": settings.openai_model,
-        "audit_report_title": req.audit_report.report_title,
-        "compliance_domain": req.audit_report.compliance_domain,
-        "target_audience": req.audit_report.target_audience,
-        "confidentiality_level": req.audit_report.confidentiality_level,
-        "documents_reviewed": len(req.audit_report.document_ids),
-        "chat_sessions": len(req.audit_report.chat_history_ids),
-        "pdf_sources": len(req.audit_report.pdf_ingestion_ids),
+        "audit_report_title": request_data.audit_report.report_title,
+        "compliance_domain": request_data.audit_report.compliance_domain,
+        "target_audience": request_data.audit_report.target_audience,
+        "confidentiality_level": request_data.audit_report.confidentiality_level,
+        "documents_reviewed": len(request_data.audit_report.document_ids),
+        "chat_sessions": len(request_data.audit_report.chat_history_ids),
+        "pdf_sources": len(request_data.audit_report.pdf_ingestion_ids),
         "industry_sector": "IT",  # Hardcoded as requested
         "average_confidence_score": (
-            sum(gap.confidence_score for gap in req.compliance_gaps) / len(req.compliance_gaps)
-            if req.compliance_gaps else 0.0
+            sum(gap.confidence_score for gap in request_data.compliance_gaps) / len(request_data.compliance_gaps)
+            if request_data.compliance_gaps else 0.0
         ),
         "average_false_positive_likelihood": (
-            sum(gap.false_positive_likelihood for gap in req.compliance_gaps) / len(req.compliance_gaps)
-            if req.compliance_gaps else 0.0
+            sum(gap.false_positive_likelihood for gap in request_data.compliance_gaps) / len(request_data.compliance_gaps)
+            if request_data.compliance_gaps else 0.0
         )
     }
 
@@ -93,20 +97,20 @@ def create_threat_intelligence_analysis(
     create_audit_log(
         object_type="audit_session",
         user_id=current_user.id,
-        object_id=req.audit_report.audit_session_id,
+        object_id=request_data.audit_report.audit_session_id,
         action="create",
-        compliance_domain=req.audit_report.compliance_domain,
-        audit_session_id=req.audit_report.audit_session_id,
+        compliance_domain=request_data.audit_report.compliance_domain,
+        audit_session_id=request_data.audit_report.audit_session_id,
         risk_level="high",
-        details={"audit report title": req.audit_report.report_title, "summary type": "threat intelligence analysis"},
+        details={"audit report title": request_data.audit_report.report_title, "summary type": "threat intelligence analysis"},
         ip_address=ip_address,
         user_agent=user_agent
     )
     
     return ThreatIntelligenceResponse(
         threat_analysis=threat_analysis,
-        audit_session_id=req.audit_report.audit_session_id,
-        compliance_domain=req.audit_report.compliance_domain,
+        audit_session_id=request_data.audit_report.audit_session_id,
+        compliance_domain=request_data.audit_report.compliance_domain,
         total_gaps=total_gaps,
         high_risk_gaps=high_risk_gaps,
         medium_risk_gaps=medium_risk_gaps,
