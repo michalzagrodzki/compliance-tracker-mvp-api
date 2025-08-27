@@ -1,9 +1,11 @@
 import logging
 import os
 from typing import Any, List, Dict, Optional
-from fastapi import APIRouter, Body, Query, Path, File, UploadFile, Form, HTTPException
+from fastapi import APIRouter, Body, Query, Path, File, UploadFile, Form, HTTPException, Request, Response, Header
 
 from auth.decorators import ValidatedUser, authorize
+from security.endpoint_validator import compute_fingerprint, require_idempotency, store_idempotency, normalize_user_agent, ensure_json_request
+from security.upload_validation import validate_document_upload, upload_validator
 from config.config import settings
 from services.audit_log import create_audit_log
 from services.ingestion import (
@@ -35,6 +37,17 @@ from services.schemas import (
 
 router = APIRouter(prefix="/ingestions", tags=["Ingestion"])
 
+# --- constants / helpers ---
+IDEMPOTENCY_TTL_SECONDS = 24 * 3600
+ALLOWED_FIELDS_UPLOAD = {
+    # keep this list tightly scoped to what clients may set (OWASP API3:2023)
+    "compliance_domain",
+    "document_version", 
+    "document_tags",
+    "document_title",
+    "document_author"
+}
+
 @router.post("/upload",
     response_model=UploadResponse,
     summary="Upload and ingest PDF document",
@@ -43,21 +56,34 @@ router = APIRouter(prefix="/ingestions", tags=["Ingestion"])
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def upload_pdf(
-    file: UploadFile = File(...),
+    request: Request,
+    response: Response,
+    file: UploadFile = File(..., description="PDF file to upload (max 50MB)"),
     compliance_domain: Optional[str] = Form(None, description="Compliance domain (e.g., 'GDPR', 'ISO_27001', 'SOX')"),
     document_version: Optional[str] = Form(None, description="Document version (e.g., 'v1.0', '2024-Q1')"),
     document_tags: Optional[str] = Form(None, description="Comma-separated list of document tags (e.g., 'policy,current,iso_27001')"),
     document_title: Optional[str] = Form(None, description="Document title (overrides PDF metadata)"),
     document_author: Optional[str] = Form(None, description="Document author (overrides PDF metadata)"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     current_user: ValidatedUser = None
 ):
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
-    if compliance_domain:
-        allowed_domains = ["ISO_27001", "GDPR", "SOX", "HIPAA", "PCI_DSS"]
-        if compliance_domain not in allowed_domains:
-            logging.warning(f"Unknown compliance domain: {compliance_domain}")
+    """
+    Hardened PDF upload endpoint with comprehensive security controls.
+    
+    Security features implemented:
+    - NIST SP 800-53 SI-3: Malicious Code Protection via file content scanning
+    - NIST SP 800-53 SI-10: Input validation and sanitization  
+    - NIST SP 800-53 AC-6: Least privilege access controls
+    - OWASP ASVS 12.4: File upload verification requirements
+    - Rate limiting per IP and user
+    - Idempotency protection
+    - Comprehensive audit logging
+    """
+    # NIST SP 800-53 SI-10: Input validation
+    ua = normalize_user_agent(request.headers.get("user-agent"))
+    client_ip = request.client.host if request.client else "unknown"
 
+    # Parse and validate form data
     parsed_tags = []
     if document_tags:
         parsed_tags = [tag.strip() for tag in document_tags.split(",") if tag.strip()]
@@ -67,20 +93,64 @@ def upload_pdf(
         
         if invalid_tags:
             logging.warning(f"Invalid tags provided: {invalid_tags}")
-        
+
+    # Prepare metadata for validation
+    metadata_payload = {
+        "compliance_domain": compliance_domain,
+        "document_version": document_version,
+        "document_tags": parsed_tags,
+        "document_title": document_title,
+        "document_author": document_author
+    }
+    
+    # Filter to only allowed fields (OWASP API3:2023)
+    filtered_metadata = {k: v for k, v in metadata_payload.items() if k in ALLOWED_FIELDS_UPLOAD and v is not None}
+    
+    # Comprehensive upload validation using our security module
     try:
-        contents = file.file.read()
-        if not contents:
-            raise HTTPException(status_code=400, detail="Empty file uploaded")
+        validation_result = validate_document_upload(
+            file=file,
+            request=request, 
+            user_id=current_user.id,
+            compliance_domain=compliance_domain,
+            document_version=document_version,
+            document_tags=parsed_tags,
+            document_title=document_title,
+            document_author=document_author
+        )
+    except HTTPException as e:
+        # Log security violation with detailed context
+        logging.warning(
+            f"Upload security violation: {e.detail} "
+            f"(user: {current_user.id}, ip: {client_ip}, filename: {file.filename})"
+        )
+        raise e
+    
+    # Idempotency protection for upload operations
+    fingerprint_data = {
+        "user_id": current_user.id,
+        "filename": validation_result["sanitized_filename"],
+        "file_hash": validation_result["sha256_hash"],
+        "metadata": filtered_metadata
+    }
+    fingerprint = compute_fingerprint(fingerprint_data)
+    repo = request.app.state.idempotency_repo
+    cached = require_idempotency(repo, idempotency_key, fingerprint)
+    
+    if cached:
+        response.headers["Location"] = cached.get("location", "")
+        logging.info(f"Idempotent upload request served from cache for user {current_user.id}")
+        return cached["body"]
+    
+    try:
+        # Ensure upload directory exists with proper permissions
+        os.makedirs(settings.pdf_dir, exist_ok=True, mode=0o750)  # Restricted permissions
         
-        os.makedirs(settings.pdf_dir, exist_ok=True)
-        safe_filename = os.path.basename(file.filename)
-        if not safe_filename:
-            raise HTTPException(status_code=400, detail="Invalid filename")
-        
-        os.makedirs(settings.pdf_dir, exist_ok=True)
+        # Use sanitized filename from validation
+        safe_filename = validation_result["sanitized_filename"]
         file_path = os.path.join(settings.pdf_dir, safe_filename)
         
+        # Handle filename conflicts with counter
         counter = 1
         original_path = file_path
         while os.path.exists(file_path):
@@ -88,11 +158,22 @@ def upload_pdf(
             file_path = f"{name}_{counter}{ext}"
             counter += 1
         
+        # Read file content (already validated by upload_validation)
+        contents = file.file.read()
+        
+        # Write file with restricted permissions
         with open(file_path, "wb") as f:
             f.write(contents)
+        os.chmod(file_path, 0o640)  # Restrict file permissions
         
-        logging.info(f"Saved file to {file_path} (size: {len(contents)} bytes)")
+        logging.info(
+            f"Saved validated file to {file_path} "
+            f"(size: {validation_result['file_size']}, "
+            f"sha256: {validation_result['sha256_hash'][:16]}..., "
+            f"user: {current_user.id})"
+        )
         
+        # Perform PDF ingestion with validated data
         chunk_count, ingestion_id = ingest_pdf_sync(
             file_path=file_path,
             compliance_domain=compliance_domain,
@@ -103,8 +184,32 @@ def upload_pdf(
             document_title=document_title
         )
         
-        return UploadResponse(
-            message=f"PDF '{safe_filename}' ingested successfully",
+        # Create comprehensive audit log entry using ingestion_id
+        create_audit_log(
+            object_type="document",
+            user_id=current_user.id,
+            object_id=ingestion_id,
+            action="create",
+            compliance_domain=compliance_domain or "unspecified",
+            audit_session_id=None,
+            risk_level="medium",  # Document uploads are medium risk
+            details={
+                "filename": validation_result["original_filename"],
+                "sanitized_filename": safe_filename,
+                "file_size": validation_result["file_size"],
+                "mime_type": validation_result["mime_type"],
+                "sha256_hash": validation_result["sha256_hash"],
+                "scan_results": validation_result["scan_results"],
+                "metadata": filtered_metadata,
+                "validation_timestamp": validation_result["validation_timestamp"]
+            },
+            ip_address=client_ip,
+            user_agent=ua
+        )
+        
+        # Prepare response
+        upload_response = UploadResponse(
+            message=f"PDF '{safe_filename}' ingested successfully with security validation",
             inserted_count=chunk_count,
             ingestion_id=ingestion_id,
             compliance_domain=compliance_domain,
@@ -112,15 +217,53 @@ def upload_pdf(
             document_tags=parsed_tags
         )
         
+        location = f"/v1/ingestions/{ingestion_id}"
+        
+        # Store idempotency result
+        store_idempotency(
+            repo, idempotency_key, fingerprint,
+            {"body": upload_response.dict(), "location": location}, IDEMPOTENCY_TTL_SECONDS
+        )
+        
+        response.headers["Location"] = location
+        
+        # Log successful upload
+        logging.info(
+            f"Document upload completed successfully: {ingestion_id} "
+            f"(user: {current_user.id}, chunks: {chunk_count})"
+        )
+        
+        return upload_response
+        
     except HTTPException:
         raise
     except Exception as e:
         logging.error(f"Unexpected error during upload: {e}", exc_info=True)
+        
+        # Create audit log for failed upload
+        create_audit_log(
+            object_type="document",
+            user_id=current_user.id,
+            object_id="upload_failed",
+            action="upload_error",
+            compliance_domain=compliance_domain or "unspecified",
+            audit_session_id=None,
+            risk_level="high",  # Failed uploads are high risk events
+            details={
+                "error": str(e),
+                "filename": file.filename,
+                "client_ip": client_ip
+            },
+            ip_address=client_ip,
+            user_agent=ua
+        )
+        
         raise HTTPException(
             status_code=500,
-            detail=f"Upload failed: {str(e)}"
+            detail="Upload failed due to server error. The incident has been logged."
         )
     finally:
+        # Ensure file handle is properly closed
         if hasattr(file.file, 'close'):
             file.file.close()
 

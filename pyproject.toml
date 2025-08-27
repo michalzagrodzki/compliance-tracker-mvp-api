@@ -21,7 +21,9 @@ dependencies = [
   "postgrest",
   "bleach",
   "fastapi-decorators",
-  "slowapi"
+  "slowapi",
+  "pikepdf",
+  "clamd"
 ]
 
 [project.optional-dependencies]
