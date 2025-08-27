@@ -92,7 +92,8 @@ class AuditLogRepository(SupabaseRepository[AuditLog]):
             except ValueError:
                 raise ValidationException(
                     detail="Invalid log_id format (must be UUID)",
-                    error_code="INVALID_UUID_FORMAT"
+                    field="log_id",
+                    value=log_id
                 )
             
             result = self.supabase.table(self.table_name)\
@@ -131,7 +132,8 @@ class AuditLogRepository(SupabaseRepository[AuditLog]):
             except ValueError:
                 raise ValidationException(
                     detail="Invalid log_id format (must be UUID)",
-                    error_code="INVALID_UUID_FORMAT"
+                    field="log_id",
+                    value=log_id
                 )
             
             result = self.supabase.table(self.table_name)\

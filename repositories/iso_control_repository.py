@@ -87,7 +87,8 @@ class ISOControlRepository(SupabaseRepository[ISOControl]):
             except ValueError:
                 raise ValidationException(
                     detail="Invalid control_id format (must be UUID)",
-                    error_code="INVALID_UUID_FORMAT"
+                    field="control_id",
+                    value=control_id
                 )
             
             result = self.supabase.table(self.table_name)\
@@ -154,7 +155,8 @@ class ISOControlRepository(SupabaseRepository[ISOControl]):
             except ValueError:
                 raise ValidationException(
                     detail="Invalid control_id format (must be UUID)",
-                    error_code="INVALID_UUID_FORMAT"
+                    field="control_id",
+                    value=control_id
                 )
             
             # Check if control exists
@@ -218,7 +220,8 @@ class ISOControlRepository(SupabaseRepository[ISOControl]):
             except ValueError:
                 raise ValidationException(
                     detail="Invalid control_id format (must be UUID)",
-                    error_code="INVALID_UUID_FORMAT"
+                    field="control_id",
+                    value=control_id
                 )
             
             # Check if control exists first to get the name for logging

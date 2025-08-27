@@ -84,7 +84,8 @@ class AuditSessionRepository(SupabaseRepository[AuditSession]):
             except ValueError:
                 raise ValidationException(
                     detail="Invalid session_id format (must be UUID)",
-                    error_code="INVALID_UUID_FORMAT"
+                    field="session_id",
+                    value=session_id
                 )
             
             result = self.supabase.table(self.table_name)\
@@ -181,7 +182,8 @@ class AuditSessionRepository(SupabaseRepository[AuditSession]):
             except ValueError:
                 raise ValidationException(
                     detail="Invalid session_id format (must be UUID)",
-                    error_code="INVALID_UUID_FORMAT"
+                    field="session_id",
+                    value=session_id
                 )
             
             # Check if session exists
@@ -238,7 +240,8 @@ class AuditSessionRepository(SupabaseRepository[AuditSession]):
             except ValueError:
                 raise ValidationException(
                     detail="Invalid session_id format (must be UUID)",
-                    error_code="INVALID_UUID_FORMAT"
+                    field="session_id",
+                    value=session_id
                 )
             
             # Check if session exists first to get details for logging
