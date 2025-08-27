@@ -142,6 +142,13 @@ def ingest_pdf_sync(
             logger.error("Failed to update ingestion record", exc_info=True)
         
         logger.info(f"Successfully ingested {filename}: {len(chunks)} chunks")
+
+        try:
+            os.remove(file_path)
+            logger.info(f"Deleted PDF file: {file_path}")
+        except Exception as delete_error:
+            logger.warning(f"Failed to delete PDF file {file_path}: {delete_error}")
+        
         return len(chunks), ingestion_id
         
     except Exception as e:

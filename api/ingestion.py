@@ -4,7 +4,7 @@ from typing import Any, List, Dict, Optional
 from fastapi import APIRouter, Body, Query, Path, File, UploadFile, Form, HTTPException
 
 from auth.decorators import ValidatedUser, authorize
-from config.config import Settings
+from config.config import settings
 from services.audit_log import create_audit_log
 from services.ingestion import (
     ingest_pdf_sync,
@@ -41,7 +41,7 @@ router = APIRouter(prefix="/ingestions", tags=["Ingestion"])
     description="Upload a PDF file and automatically ingest it into the vector database with metadata",
     status_code=201
 )
-@authorize(allowed_roles=["admin"], check_active=True)
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 def upload_pdf(
     file: UploadFile = File(...),
     compliance_domain: Optional[str] = Form(None, description="Compliance domain (e.g., 'GDPR', 'ISO_27001', 'SOX')"),
@@ -73,12 +73,13 @@ def upload_pdf(
         if not contents:
             raise HTTPException(status_code=400, detail="Empty file uploaded")
         
-        os.makedirs(Settings.pdf_dir, exist_ok=True)
+        os.makedirs(settings.pdf_dir, exist_ok=True)
         safe_filename = os.path.basename(file.filename)
         if not safe_filename:
             raise HTTPException(status_code=400, detail="Invalid filename")
         
-        file_path = os.path.join(Settings.pdf_dir, safe_filename)
+        os.makedirs(settings.pdf_dir, exist_ok=True)
+        file_path = os.path.join(settings.pdf_dir, safe_filename)
         
         counter = 1
         original_path = file_path
