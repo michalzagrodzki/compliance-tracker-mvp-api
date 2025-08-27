@@ -1,11 +1,14 @@
 from datetime import datetime, timezone
 import logging
 from typing import Any, List, Dict, Optional
-from fastapi import APIRouter, HTTPException, Query, Path, Body, Request, Query,status
+from fastapi import APIRouter, HTTPException, Query, Path, Body, Request, Header, Response, status
 
 from auth.decorators import ValidatedUser, authorize
+from security.endpoint_validator import compute_fingerprint, require_idempotency, store_idempotency, normalize_user_agent, ensure_json_request
+from security.input_validator import InputValidator, SecurityError
 from services.audit_log import create_audit_log
 from dependencies import AuditReportServiceDep
+from common.exceptions import ValidationException, AuthorizationException, BusinessLogicException
 from services.audit_report_versions import (
     compare_audit_report_versions,
     create_audit_report_version,
@@ -31,6 +34,24 @@ from services.schemas import (
     AuditReportSearchRequest,
     AuditReportDistributionCreate,
 )
+
+# --- constants / helpers ---
+IDEMPOTENCY_TTL_SECONDS = 24 * 3600
+ALLOWED_FIELDS_CREATE = {
+    # keep this list tightly scoped to what clients may set (OWASP API3:2023)
+    "report_title",
+    "report_type", 
+    "compliance_domain",
+    "target_audience",
+    "confidentiality_level",
+    "audit_session_id",
+    "compliance_gap_ids",
+    "document_ids",
+    "pdf_ingestion_ids",
+    "include_technical_details",
+    "include_source_citations",
+    "include_confidence_scores"
+}
 
 router = APIRouter(prefix="/audit-reports", tags=["Audit Reports"])
 
@@ -130,19 +151,81 @@ async def get_audit_report(
 
 @router.post("",
     summary="Create new audit report",
-    description="Creates a new audit report with the provided details.",
+    description="Creates a new audit report with the provided details and comprehensive security controls.",
     response_model=Dict[str, Any],
     status_code=201
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 async def create_new_audit_report(
+    request: Request,
+    response: Response,
     report_data: AuditReportCreate = Body(..., description="Audit report data"),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     audit_report_service: AuditReportServiceDep = None,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
+    """Create new audit report with enhanced security controls."""
+    # NIST CSF 2.0 PR.DS-05: Data-at-rest protection, NIST SP 800-53 SI-10: Input validation
+    ensure_json_request(request)
+    ua = normalize_user_agent(request.headers.get("user-agent"))
+    
     try:
-        report_dict = report_data.model_dump()
-
+        # Extract client information for audit trail (NIST CSF 2.0 DE.AE-03: Event data aggregation)
+        ip_address = request.client.host if request.client else None
+        
+        # Convert request data to dict for processing and input validation
+        if hasattr(report_data, "model_dump"):
+            payload = report_data.model_dump()
+        elif hasattr(report_data, "dict"):
+            payload = report_data.dict()
+        else:
+            payload = dict(report_data)
+        
+        # Filter payload to only allowed create fields (OWASP API3:2023 - Broken Object Property Level Authorization)
+        filtered_payload = {k: v for k, v in payload.items() if k in ALLOWED_FIELDS_CREATE}
+        
+        # Input validation and sanitization (NIST CSF 2.0 PR.DS-02: Data-in-transit protection)
+        try:
+            if "report_title" in filtered_payload and filtered_payload["report_title"]:
+                filtered_payload["report_title"] = InputValidator.sanitize_text(filtered_payload["report_title"], 200)
+            
+            if "compliance_domain" in filtered_payload and filtered_payload["compliance_domain"]:
+                filtered_payload["compliance_domain"] = InputValidator.validate_compliance_domain(filtered_payload["compliance_domain"])
+            
+            # Validate UUID format for audit_session_id
+            if "audit_session_id" in filtered_payload and filtered_payload["audit_session_id"]:
+                import uuid
+                try:
+                    uuid.UUID(str(filtered_payload["audit_session_id"]))
+                except ValueError:
+                    raise SecurityError("Invalid audit_session_id format - must be UUID")
+                    
+        except SecurityError as e:
+            logger.warning(f"Input validation failed for audit report creation: {e}", extra={
+                "user_id": current_user.id,
+                "ip_address": ip_address,
+                "user_agent": ua
+            })
+            raise HTTPException(status_code=400, detail=str(e))
+        
+        # Validate required fields are present
+        if not filtered_payload.get("report_title") or not filtered_payload.get("audit_session_id"):
+            raise HTTPException(
+                status_code=400,
+                detail="report_title and audit_session_id are required"
+            )
+        
+        # Idempotency protection for create operations (NIST CSF 2.0 PR.DS-01: Data-at-rest protection)
+        fingerprint = compute_fingerprint(filtered_payload | {"user_id": current_user.id})
+        repo = request.app.state.idempotency_repo
+        cached = require_idempotency(repo, idempotency_key, fingerprint)
+        
+        if cached:
+            response.headers["Location"] = cached.get("location", "")
+            return cached["body"]
+        
+        # Apply user context and access control (NIST CSF 2.0 PR.AC-01: Identity management)
+        report_dict = filtered_payload.copy()
         if current_user.role != "admin" and str(report_dict.get("user_id")) != str(current_user.id):
             report_dict["user_id"] = current_user.id
 
@@ -157,6 +240,12 @@ async def create_new_audit_report(
         try:
             created_report = await audit_report_service.create_report(report_dict, str(current_user.id))
         except Exception as e:
+            logger.error(f"Error creating audit report: {str(e)}", extra={
+                "user_id": current_user.id,
+                "ip_address": ip_address,
+                "user_agent": ua,
+                "audit_session_id": report_dict.get("audit_session_id")
+            })
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error creating audit report: {str(e)}"
@@ -173,6 +262,10 @@ async def create_new_audit_report(
                 report_snapshot=serialized_report
             )
         except Exception as e:
+            logger.error(f"Error creating audit report version: {str(e)}", extra={
+                "user_id": current_user.id,
+                "audit_report_id": created_report["id"]
+            })
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error creating audit report version: {str(e)}"
@@ -184,21 +277,75 @@ async def create_new_audit_report(
                 audit_report=created_report["id"]
             )
         except Exception as e:
+            logger.error(f"Error updating audit session: {str(e)}", extra={
+                "user_id": current_user.id,
+                "audit_session_id": report_data.audit_session_id,
+                "audit_report_id": created_report["id"]
+            })
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error updating audit session: {str(e)}"
             )
 
-        return created_report
+        # Security audit logging (NIST CSF 2.0 DE.AE-03: Event data aggregation)
+        create_audit_log(
+            object_type="audit_report",
+            user_id=current_user.id,
+            object_id=created_report["id"],
+            action="create",
+            compliance_domain=report_dict.get("compliance_domain"),
+            audit_session_id=report_dict.get("audit_session_id"),
+            risk_level="high",
+            details={
+                "report_title": report_dict.get("report_title"),
+                "report_type": report_dict.get("report_type"),
+                "confidentiality_level": report_dict.get("confidentiality_level"),
+                "method": "api_endpoint"
+            },
+            ip_address=ip_address,
+            user_agent=ua
+        )
 
+        # Prepare structured response with location header
+        location = f"/v1/audit-reports/{created_report['id']}"
+        body = {
+            "data": created_report,
+            "meta": {
+                "message": "Audit report created successfully",
+                "compliance_domain": report_dict.get("compliance_domain"),
+                "confidentiality_level": report_dict.get("confidentiality_level")
+            }
+        }
+
+        # Store idempotency result (NIST CSF 2.0 PR.DS-01: Data-at-rest protection)
+        store_idempotency(
+            repo, idempotency_key, fingerprint,
+            {"body": body, "location": location}, IDEMPOTENCY_TTL_SECONDS
+        )
+        
+        response.headers["Location"] = location
+        return body
+
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.detail)
+    except AuthorizationException as e:
+        raise HTTPException(status_code=403, detail=e.detail)
+    except BusinessLogicException as e:
+        raise HTTPException(status_code=500, detail=e.detail)
     except HTTPException:
         # Already handled above, just propagate
         raise
     except Exception as e:
-        # Fallback for any unexpected error
+        # Fallback for any unexpected error with security logging
+        logger.error(f"Unexpected error in audit report creation: {str(e)}", extra={
+            "user_id": current_user.id if current_user else None,
+            "ip_address": ip_address,
+            "user_agent": ua,
+            "error_type": type(e).__name__
+        })
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
+            detail="Internal server error occurred during audit report creation"
         )
 
 @router.post("/generate",
