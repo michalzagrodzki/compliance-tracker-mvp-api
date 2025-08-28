@@ -9,6 +9,7 @@ from security.input_validator import InputValidator, SecurityError
 from services.audit_log import create_audit_log
 from dependencies import AuditReportServiceDep
 from common.exceptions import ValidationException, AuthorizationException, BusinessLogicException
+from common.logging import get_logger
 from services.audit_report_versions import (
     compare_audit_report_versions,
     create_audit_report_version,
@@ -53,6 +54,7 @@ ALLOWED_FIELDS_CREATE = {
     "include_confidence_scores"
 }
 
+logger = get_logger(__name__)
 router = APIRouter(prefix="/audit-reports", tags=["Audit Reports"])
 
 @router.get("",
