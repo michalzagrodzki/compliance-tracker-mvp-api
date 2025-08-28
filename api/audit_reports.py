@@ -2,6 +2,10 @@ from datetime import datetime, timezone
 import logging
 from typing import Any, List, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query, Path, Body, Request, Header, Response, status
+import uuid
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from auth.decorators import ValidatedUser, authorize
 from security.endpoint_validator import compute_fingerprint, require_idempotency, store_idempotency, normalize_user_agent, ensure_json_request
@@ -34,6 +38,8 @@ from services.schemas import (
     AuditReportStatusUpdate,
     AuditReportSearchRequest,
     AuditReportDistributionCreate,
+    GeneratedRecommendationResponse,
+    GeneratedActionItemResponse,
 )
 
 # --- constants / helpers ---
@@ -56,6 +62,7 @@ ALLOWED_FIELDS_CREATE = {
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/audit-reports", tags=["Audit Reports"])
+limiter = Limiter(key_func=get_remote_address)
 
 @router.get("",
     summary="List all audit reports with pagination",
@@ -661,3 +668,140 @@ def delete_audit_report_distribution(
 @authorize(allowed_roles=["admin"], check_active=True)
 def cleanup_expired_audit_report_distributions() -> Dict[str, Any]:
     return cleanup_expired_distributions()
+
+@router.post("/recommendation/{audit_session_id}",
+    summary="Create recommendations for audit session",
+    description="Generate recommendations for a specific audit session.",
+    response_model=GeneratedRecommendationResponse,
+    status_code=201
+)
+@limiter.limit("10/minute")
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
+async def create_recommendations(
+    request: Request,
+    audit_session_id: str = Path(..., description="Audit session UUID"),
+    audit_report_service: AuditReportServiceDep = None,
+    current_user: ValidatedUser = None
+) -> GeneratedRecommendationResponse:
+    """Create recommendations for an audit session."""
+    try:
+        try:
+            uuid.UUID(str(audit_session_id))
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid audit_session_id format - must be UUID"
+            )
+        
+        # Generate recommendations using the service
+        result = await audit_report_service.generate_recommendations(audit_session_id)
+        
+        # Create audit log
+        create_audit_log(
+            object_type="audit_report",
+            user_id=current_user.id,
+            object_id=audit_session_id,
+            action="generate",
+            compliance_domain=None,  # Will be populated by the service if available
+            audit_session_id=audit_session_id,
+            risk_level="medium",
+            details={
+                "method": "api_endpoint",
+                "recommendations_length": len(result['recommendations']),
+                "gaps_analyzed": result.get('gaps_analyzed', 0)
+            },
+            ip_address=None,
+            user_agent=None
+        )
+        
+        return GeneratedRecommendationResponse(
+            message="Recommendations generated successfully",
+            audit_session_id=audit_session_id,
+            recommendations=result['recommendations'],
+            generated_at=datetime.now(timezone.utc),
+            generated_by=str(current_user.id),
+            gaps_analyzed=result.get('gaps_analyzed'),
+            chat_sessions_analyzed=result.get('chat_sessions_analyzed'),
+            high_risk_gaps=result.get('high_risk_gaps')
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating recommendations: {str(e)}", extra={
+            "user_id": current_user.id,
+            "audit_session_id": audit_session_id
+        })
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error occurred during recommendations creation"
+        )
+
+@router.post("/action-items/{audit_session_id}",
+    summary="Create action items for audit session",
+    description="Generate action items for a specific audit session.",
+    response_model=GeneratedActionItemResponse,
+    status_code=201
+)
+@limiter.limit("10/minute")
+@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
+async def create_action_items(
+    request: Request,
+    audit_session_id: str = Path(..., description="Audit session UUID"),
+    audit_report_service: AuditReportServiceDep = None,
+    current_user: ValidatedUser = None
+) -> GeneratedActionItemResponse:
+    """Create action items for an audit session."""
+    try:
+        try:
+            uuid.UUID(str(audit_session_id))
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid audit_session_id format - must be UUID"
+            )
+        
+        # Generate action items using the service
+        result = await audit_report_service.generate_action_items(audit_session_id)
+        
+        # Create audit log
+        create_audit_log(
+            object_type="audit_report",
+            user_id=current_user.id,
+            object_id=audit_session_id,
+            action="generate",
+            compliance_domain=None,  # Will be populated by the service if available
+            audit_session_id=audit_session_id,
+            risk_level="medium",
+            details={
+                "method": "api_endpoint",
+                "action_items_length": len(result['action_items']),
+                "gaps_analyzed": result.get('gaps_analyzed', 0)
+            },
+            ip_address=None,
+            user_agent=None
+        )
+        
+        return GeneratedActionItemResponse(
+            message="Action items generated successfully",
+            audit_session_id=audit_session_id,
+            action_items=result['action_items'],
+            generated_at=datetime.now(timezone.utc),
+            generated_by=str(current_user.id),
+            gaps_analyzed=result.get('gaps_analyzed'),
+            chat_sessions_analyzed=result.get('chat_sessions_analyzed'),
+            regulatory_gaps=result.get('regulatory_gaps'),
+            critical_high_risk_gaps=result.get('critical_high_risk_gaps')
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating action items: {str(e)}", extra={
+            "user_id": current_user.id,
+            "audit_session_id": audit_session_id
+        })
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error occurred during action items creation"
+        )

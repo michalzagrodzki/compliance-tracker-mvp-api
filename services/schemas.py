@@ -724,6 +724,43 @@ class GeneratedActionItem(BaseModel):
     class Config:
         use_enum_values = True
 
+class GeneratedRecommendationResponse(BaseModel):
+    """Response model for generated recommendations endpoint"""
+    message: str = Field(..., description="Status message")
+    audit_session_id: str = Field(..., description="Audit session UUID")
+    recommendations: str = Field(..., description="Generated recommendations content")
+    generated_at: datetime = Field(..., description="Generation timestamp")
+    generated_by: str = Field(..., description="User ID who generated the recommendations")
+    
+    # Optional metadata
+    gaps_analyzed: Optional[int] = Field(None, description="Number of compliance gaps analyzed")
+    chat_sessions_analyzed: Optional[int] = Field(None, description="Number of chat sessions analyzed")
+    high_risk_gaps: Optional[int] = Field(None, description="Number of high/critical risk gaps")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+class GeneratedActionItemResponse(BaseModel):
+    """Response model for generated action items endpoint"""
+    message: str = Field(..., description="Status message")
+    audit_session_id: str = Field(..., description="Audit session UUID")
+    action_items: str = Field(..., description="Generated action items checklist")
+    generated_at: datetime = Field(..., description="Generation timestamp")
+    generated_by: str = Field(..., description="User ID who generated the action items")
+    
+    # Optional metadata
+    gaps_analyzed: Optional[int] = Field(None, description="Number of compliance gaps analyzed")
+    chat_sessions_analyzed: Optional[int] = Field(None, description="Number of chat sessions analyzed")
+    regulatory_gaps: Optional[int] = Field(None, description="Number of regulatory gaps")
+    critical_high_risk_gaps: Optional[int] = Field(None, description="Number of critical/high risk gaps")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
 class AuditReportCreate(BaseModel):
     """Request model for creating a new audit report"""
     user_id: UUID = Field(..., description="User who is generating the report")

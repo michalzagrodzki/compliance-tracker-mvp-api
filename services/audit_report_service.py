@@ -316,9 +316,9 @@ class AuditReportService:
                 gap_risk_counts,
                 total_potential_fines,
             )
-            detailed_findings = self._generate_detailed_findings(chat_history, gaps, list(document_ids))
-            recommendations = self._generate_recommendations(gaps, session.compliance_domain)
-            action_items = self._generate_action_items(gaps)
+            detailed_findings = self.generate_detailed_findings(chat_history, gaps, list(document_ids))
+            recommendations = self.generate_recommendations(gaps, session.compliance_domain)
+            action_items = self.generate_action_items(gaps)
 
             compliance_rating = self._calculate_compliance_rating(gaps, total_questions)
             risk_score = self._calculate_risk_score(gaps)
@@ -426,59 +426,7 @@ class AuditReportService:
 
         return summary
 
-    def _generate_detailed_findings(self, chat_history: List[Any], gaps: List[Any], document_ids: List[str]) -> Dict[str, Any]:
-        coverage_areas = sorted({h.compliance_domain for h in chat_history if h.compliance_domain})
-        confidence_scores = [h.metadata.get("confidence_score") for h in chat_history if isinstance(h.metadata, dict) and h.metadata.get("confidence_score") is not None]
-        avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else None
-        low_conf_count = len([s for s in confidence_scores if s is not None and s < 0.7]) if confidence_scores else 0
-
-        critical = len([g for g in gaps if str(getattr(g, 'risk_level', 'medium')) == 'critical'])
-        high = len([g for g in gaps if str(getattr(g, 'risk_level', 'medium')) == 'high'])
-
-        return {
-            "conversation_analysis": {
-                "total_interactions": len(chat_history),
-                "unique_documents_referenced": len(document_ids),
-                "coverage_areas": coverage_areas,
-                "avg_confidence_score": avg_confidence,
-                "low_confidence_interactions": low_conf_count,
-            },
-            "gap_analysis": {
-                "total_gaps": len(gaps),
-                "critical_gaps_count": critical,
-                "high_risk_gaps_count": high,
-            },
-            "document_coverage": {
-                "documents_accessed": len(document_ids),
-                "citation_frequency": {},
-            },
-            "summary": f"Analysis of {len(chat_history)} interactions identified {len(gaps)} compliance gaps across {len(coverage_areas)} domains.",
-            "key_insights": [
-                f"{critical} critical gaps require immediate attention" if critical else None,
-                f"Average confidence {avg_confidence:.2f} suggests documentation improvements" if (avg_confidence and avg_confidence < 0.8) else None,
-            ],
-        }
-
-    def _generate_recommendations(self, gaps: List[Any], domain: str) -> List[Dict[str, Any]]:
-        recs: List[Dict[str, Any]] = []
-        # simple grouping by gap_type
-        by_type: Dict[str, List[Any]] = {}
-        for g in gaps:
-            gt = str(getattr(g, "gap_type", "no_evidence"))
-            by_type.setdefault(gt, []).append(g)
-        for gt, items in by_type.items():
-            high_priority = any(str(getattr(g, "risk_level", "medium")) in ["critical", "high"] for g in items)
-            recs.append({
-                "title": f"Address {gt.replace('_',' ').title()}",
-                "description": f"{len(items)} gaps detected related to {gt.replace('_',' ')} in {domain}",
-                "priority": "high" if high_priority else "medium",
-                "recommendation_type": gt,
-                "action_items": [f"Remediate: {getattr(g, 'gap_title', 'Gap')}" for g in items[:3]],
-                "affected_gaps": [g.id for g in items if getattr(g, 'id', None)],
-            })
-        return recs
-
-    def _generate_action_items(self, gaps: List[Any]) -> List[Dict[str, Any]]:
+    def generate_action_items(self, gaps: List[Any]) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
         for g in gaps:
             items.append({
@@ -488,6 +436,175 @@ class AuditReportService:
                 "owner": getattr(g, 'assigned_to', None),
             })
         return items
+
+    async def generate_action_items(self, audit_session_id: str) -> str:
+        """Generate AI action items for audit session based on compliance gaps and chat history."""
+        try:
+            import time
+            from openai import OpenAI
+            from config.config import settings
+            
+            start = time.time()
+            
+            # Fetch compliance gaps for the audit session
+            compliance_gaps = await self.compliance_gap_repository.get_by_audit_session(audit_session_id)
+            if not compliance_gaps:
+                logger.info(f"No compliance gaps found for audit session {audit_session_id}")
+                return "No compliance gaps identified for this audit session. No action items are needed at this time."
+            
+            # Fetch chat history for the audit session
+            chat_history = await self.chat_history_repository.list_by_audit_session(audit_session_id, compliance_domain=None)
+            
+            # Group data by chat_history_id and compliance_gap
+            grouped_data = []
+            
+            # Create a mapping of chat_history_id to chat messages
+            chat_mapping = {}
+            for chat in chat_history:
+                chat_mapping[str(chat.id)] = {
+                    'question': chat.question,
+                    'answer': chat.answer,
+                    'compliance_domain': chat.compliance_domain,
+                    'created_at': chat.created_at.isoformat() if chat.created_at else None
+                }
+            
+            # Group compliance gaps with their related chat history
+            for gap in compliance_gaps:
+                gap_data = {
+                    'gap_id': gap.id,
+                    'gap_title': getattr(gap, 'gap_title', 'Unknown Gap'),
+                    'gap_description': getattr(gap, 'gap_description', ''),
+                    'risk_level': getattr(gap, 'risk_level', 'medium'),
+                    'recommendation': getattr(gap, 'recommendation_text', ''),
+                    'recommended_actions': getattr(gap, 'recommended_actions', []),
+                    'compliance_domain': getattr(gap, 'compliance_domain', ''),
+                    'regulatory_requirement': getattr(gap, 'regulatory_requirement', False),
+                    'assigned_to': getattr(gap, 'assigned_to', None),
+                    'chat_history': None
+                }
+                
+                # Find related chat history if available
+                chat_history_id = getattr(gap, 'chat_history_id', None)
+                if chat_history_id and str(chat_history_id) in chat_mapping:
+                    gap_data['chat_history'] = chat_mapping[str(chat_history_id)]
+                
+                grouped_data.append(gap_data)
+            
+            # Prepare data for OpenAI query
+            system_message = """You are an expert compliance project manager specializing in creating actionable checklist items for audit remediation. 
+            Based on compliance gaps and related chat conversations, create detailed action items in checklist format that teams can execute to address the gaps.
+            
+            Your action items should be:
+            - Specific, measurable, and actionable
+            - Prioritized by risk level and regulatory requirements
+            - Include clear success criteria and deadlines
+            - Organized in logical implementation order
+            - Include both immediate and follow-up actions
+            - Consider resource requirements and dependencies
+            - Professional and suitable for project management
+            
+            Format as a markdown checklist with clear categorization and success criteria for each item."""
+            
+            # Build the user prompt with all gap and chat data
+            user_prompt = f"""
+            Create detailed action items checklist for compliance gap remediation from audit session {audit_session_id}:
+
+            ## Compliance Gaps and Context:
+            """
+            
+            for i, item in enumerate(grouped_data, 1):
+                user_prompt += f"""
+                ### Gap {i}: {item['gap_title']} (Risk: {item['risk_level'].upper()})
+                **Domain:** {item['compliance_domain']}
+                **Regulatory:** {'Yes' if item['regulatory_requirement'] else 'No'}
+                **Assigned To:** {item['assigned_to'] or 'Unassigned'}
+                **Description:** {item['gap_description']}
+                **Current Recommendation:** {item['recommendation'] or 'None provided'}
+                **Suggested Actions:** {', '.join(item['recommended_actions']) if item['recommended_actions'] else 'None provided'}
+
+                """
+                if item['chat_history']:
+                    user_prompt += f"""**Related Chat Context:**
+                    - **Question:** {item['chat_history']['question']}
+                    - **Answer:** {item['chat_history']['answer'][:400]}{'...' if len(item['chat_history']['answer']) > 400 else ''}
+                    - **Date:** {item['chat_history']['created_at']}
+
+                    """
+
+            user_prompt += f"""
+            ## Summary:
+            - Total Gaps: {len(compliance_gaps)}
+            - Critical/High Risk Gaps: {len([g for g in compliance_gaps if getattr(g, 'risk_level', 'medium') in ['critical', 'high']])}
+            - Regulatory Gaps: {len([g for g in compliance_gaps if getattr(g, 'regulatory_requirement', False)])}
+            - Chat Sessions Analyzed: {len([item for item in grouped_data if item['chat_history']])}
+
+            ## Requirements:
+            Create a comprehensive action items checklist organized by:
+
+            1. **Immediate Actions (0-30 days)** - Critical and high-risk gaps requiring urgent attention
+            2. **Short-term Actions (1-3 months)** - Medium-risk gaps and foundational improvements  
+            3. **Long-term Actions (3-6 months)** - Process improvements and continuous monitoring
+
+            For each action item, include:
+            - Clear, specific task description
+            - Success criteria (how to know it's complete)
+            - Estimated timeline
+            - Resource requirements
+            - Dependencies (if any)
+            - Verification method
+
+            Format as markdown checklist with:
+            - [ ] Action item description
+            - **Success Criteria:** Specific measurable outcomes
+            - **Timeline:** X days/weeks
+            - **Owner:** Role/person responsible
+            - **Resources:** What's needed
+            - **Verification:** How to confirm completion
+
+            Prioritize regulatory requirements and high-risk gaps first.
+            """
+            
+            # Call OpenAI API
+            client = OpenAI(api_key=settings.openai_api_key)
+            
+            completion = client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=3500,
+            )
+            
+            action_items = completion.choices[0].message.content.strip()
+            
+            # Log performance
+            log_performance(
+                operation="generate_action_items",
+                duration_ms=(time.time() - start) * 1000,
+                success=True,
+                item_count=len(compliance_gaps),
+            )
+            
+            logger.info(f"Successfully generated action items for audit session {audit_session_id} with {len(compliance_gaps)} gaps")
+            
+            # Return action items with metadata
+            return {
+                'action_items': action_items,
+                'gaps_analyzed': len(compliance_gaps),
+                'chat_sessions_analyzed': len([item for item in grouped_data if item['chat_history']]),
+                'regulatory_gaps': len([g for g in compliance_gaps if getattr(g, 'regulatory_requirement', False)]),
+                'critical_high_risk_gaps': len([g for g in compliance_gaps if getattr(g, 'risk_level', 'medium') in ['critical', 'high']])
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to generate action items for audit session {audit_session_id}: {str(e)}", exc_info=True)
+            raise BusinessLogicException(
+                detail=f"Failed to generate action items: {str(e)}",
+                error_code="ACTION_ITEMS_GENERATION_FAILED",
+                context={"audit_session_id": audit_session_id},
+            )
 
     def _calculate_compliance_rating(self, gaps: List[Any], total_questions: int) -> float:
         # Base rating 100, subtract penalties by risk level
@@ -509,6 +626,150 @@ class AuditReportService:
             return 0.0
         total = sum(weights.get(str(getattr(g, "risk_level", "medium")), 2) for g in gaps)
         return round((total / (len(gaps) * 4)) * 100.0, 2)
+
+    async def generate_recommendations(self, audit_session_id: str) -> str:
+        """Generate AI recommendations for audit session based on compliance gaps and chat history."""
+        try:
+            import time
+            from openai import OpenAI
+            from config.config import settings
+            
+            start = time.time()
+            
+            # Fetch compliance gaps for the audit session
+            compliance_gaps = await self.compliance_gap_repository.get_by_audit_session(audit_session_id)
+            if not compliance_gaps:
+                logger.info(f"No compliance gaps found for audit session {audit_session_id}")
+                return "No compliance gaps identified for this audit session. No specific recommendations are needed at this time."
+            
+            # Fetch chat history for the audit session
+            chat_history = await self.chat_history_repository.list_by_audit_session(audit_session_id, compliance_domain=None)
+            
+            # Group data by chat_history_id and compliance_gap
+            grouped_data = []
+            
+            # Create a mapping of chat_history_id to chat messages
+            chat_mapping = {}
+            for chat in chat_history:
+                chat_mapping[str(chat.id)] = {
+                    'question': chat.question,
+                    'answer': chat.answer,
+                    'compliance_domain': chat.compliance_domain,
+                    'created_at': chat.created_at.isoformat() if chat.created_at else None
+                }
+            
+            # Group compliance gaps with their related chat history
+            for gap in compliance_gaps:
+                gap_data = {
+                    'gap_id': gap.id,
+                    'gap_title': getattr(gap, 'gap_title', 'Unknown Gap'),
+                    'gap_description': getattr(gap, 'gap_description', ''),
+                    'risk_level': getattr(gap, 'risk_level', 'medium'),
+                    'recommendation': getattr(gap, 'recommendation_text', ''),
+                    'compliance_domain': getattr(gap, 'compliance_domain', ''),
+                    'chat_history': None
+                }
+                
+                # Find related chat history if available
+                chat_history_id = getattr(gap, 'chat_history_id', None)
+                if chat_history_id and str(chat_history_id) in chat_mapping:
+                    gap_data['chat_history'] = chat_mapping[str(chat_history_id)]
+                
+                grouped_data.append(gap_data)
+            
+            # Prepare data for OpenAI query
+            system_message = """You are an expert compliance analyst specializing in generating actionable recommendations for audit reports. 
+            Based on compliance gaps identified during an audit session and the related chat conversations, provide comprehensive, 
+            practical recommendations that address the specific gaps and improve overall compliance posture.
+            
+            Your recommendations should be:
+            - Specific and actionable
+            - Prioritized by risk level
+            - Grouped by compliance domain when applicable
+            - Include both immediate and long-term actions
+            - Consider the context from chat conversations
+            - Professional and suitable for audit report inclusion"""
+            
+            # Build the user prompt with all gap and chat data
+            user_prompt = f"""
+            Analyze the following compliance gaps and related chat history from audit session {audit_session_id} and generate comprehensive recommendations:
+
+            ## Compliance Gaps and Related Context:
+            """
+            
+            for i, item in enumerate(grouped_data, 1):
+                user_prompt += f"""
+                ### Gap {i}: {item['gap_title']} (Risk: {item['risk_level'].upper()})
+                **Domain:** {item['compliance_domain']}
+                **Description:** {item['gap_description']}
+                **Existing Recommendation:** {item['recommendation'] or 'None provided'}
+
+                """
+                if item['chat_history']:
+                    user_prompt += f"""**Related Chat Context:**
+                    - **Question:** {item['chat_history']['question']}
+                    - **Answer:** {item['chat_history']['answer'][:500]}{'...' if len(item['chat_history']['answer']) > 500 else ''}
+                    - **Date:** {item['chat_history']['created_at']}
+
+                    """
+
+            user_prompt += f"""
+            ## Summary:
+            - Total Gaps: {len(compliance_gaps)}
+            - High/Critical Risk Gaps: {len([g for g in compliance_gaps if getattr(g, 'risk_level', 'medium') in ['high', 'critical']])}
+            - Chat Sessions Analyzed: {len([item for item in grouped_data if item['chat_history']])}
+
+            ## Requirements:
+            Generate a comprehensive recommendations report that:
+            1. **Executive Summary** - Overview of key recommendations
+            2. **Priority Actions** - Immediate actions for high/critical risk gaps
+            3. **Implementation Roadmap** - Medium-term actions with timeline
+            4. **Process Improvements** - Long-term systematic improvements
+            5. **Monitoring & Follow-up** - How to track progress and ensure compliance
+
+            Format the response in clear markdown suitable for inclusion in an audit report.
+            """
+            
+            # Call OpenAI API
+            client = OpenAI(api_key=settings.openai_api_key)
+            
+            completion = client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=3000,
+            )
+            
+            recommendations = completion.choices[0].message.content.strip()
+            
+            # Log performance
+            log_performance(
+                operation="generate_recommendations",
+                duration_ms=(time.time() - start) * 1000,
+                success=True,
+                item_count=len(compliance_gaps),
+            )
+            
+            logger.info(f"Successfully generated recommendations for audit session {audit_session_id} with {len(compliance_gaps)} gaps")
+            
+            # Return recommendations with metadata
+            return {
+                'recommendations': recommendations,
+                'gaps_analyzed': len(compliance_gaps),
+                'chat_sessions_analyzed': len([item for item in grouped_data if item['chat_history']]),
+                'high_risk_gaps': len([g for g in compliance_gaps if getattr(g, 'risk_level', 'medium') in ['high', 'critical']])
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to generate recommendations for audit session {audit_session_id}: {str(e)}", exc_info=True)
+            raise BusinessLogicException(
+                detail=f"Failed to generate recommendations: {str(e)}",
+                error_code="RECOMMENDATIONS_GENERATION_FAILED",
+                context={"audit_session_id": audit_session_id},
+            )
 
 
 def create_audit_report_service(
