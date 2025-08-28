@@ -410,9 +410,11 @@ def generate_audit_report_from_session(
 
         detailed_findings = _generate_detailed_findings(chat_history, gaps, document_ids)
 
-        recommendations = _generate_recommendations(gaps, session_data)
+        recommendations_list = _generate_recommendations(gaps, session_data)
+        recommendations = json.dumps([rec.dict() if hasattr(rec, 'dict') else rec for rec in recommendations_list])
 
-        action_items = _generate_action_items(gaps)
+        action_items_list = _generate_action_items(gaps)
+        action_items = json.dumps([item.dict() if hasattr(item, 'dict') else item for item in action_items_list])
 
         compliance_rating = _calculate_compliance_rating(gaps, total_questions)
 
@@ -941,8 +943,8 @@ def create_audit_report(report_data: Dict[str, Any]) -> Dict[str, Any]:
         report_data.setdefault("document_ids", [])
         report_data.setdefault("pdf_ingestion_ids", [])
         report_data.setdefault("detailed_findings", {})
-        report_data.setdefault("recommendations", [])
-        report_data.setdefault("action_items", [])
+        report_data.setdefault("recommendations", "[]")
+        report_data.setdefault("action_items", "[]")
         report_data.setdefault("appendices", {})
         report_data.setdefault("distributed_to", [])
         report_data.setdefault("audit_trail", [])

@@ -872,8 +872,8 @@ class AuditReportUpdate(BaseModel):
     threat_intelligence_analysis: Optional[str] = None
     target_audience_summary: Optional[str] = None
     detailed_findings: Optional[List[DetailedFindings]] = None
-    recommendations: Optional[List[GeneratedRecommendation]] = None
-    action_items: Optional[List[GeneratedActionItem]] = None
+    recommendations: Optional[str] = None
+    action_items: Optional[str] = None
     appendices: Optional[Dict[str, Any]] = None
     
     # Report generation settings
@@ -1010,94 +1010,7 @@ class AuditReportUpdate(BaseModel):
         else:
             raise ValueError(f"detailed_findings must be a list or dict, got {type(v)}")
     
-    @validator('recommendations')
-    def validate_recommendations(cls, v):
-        if v is None:
-            return []
-
-        if isinstance(v, list):
-            if len(v) == 0:
-                return []
-            validated_recommendations = []
-            for item in v:
-                if isinstance(item, GeneratedRecommendation):
-                    validated_recommendations.append(item)
-                elif isinstance(item, dict):
-                    try:
-                        validated_rec = GeneratedRecommendation(**item)
-                        validated_recommendations.append(validated_rec)
-                    except Exception as e:
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        logger.warning(f"GeneratedRecommendation validation failed, keeping as dict: {e}")
-                        validated_recommendations.append(item)
-                else:
-                    raise ValueError(f"Each recommendation must be a dict or GeneratedRecommendation object, got {type(item)}")
-            return validated_recommendations
-
-        if isinstance(v, dict):
-            if 'recommendations' in v and isinstance(v['recommendations'], list):
-                return cls.validate_recommendations(v['recommendations'])
-            try:
-                validated_rec = GeneratedRecommendation(**v)
-                return [validated_rec]
-            except Exception:
-                return [v]
-        if isinstance(v, str):
-            try:
-                import json
-                parsed = json.loads(v)
-                if isinstance(parsed, list):
-                    return cls.validate_recommendations(parsed)
-                return cls.validate_recommendations([parsed]) if isinstance(parsed, dict) else []
-            except json.JSONDecodeError:
-                return []
-        return []
     
-    @validator('action_items')
-    def validate_action_items(cls, v):
-        if v is None:
-            return []
-        
-        if isinstance(v, list):
-            if len(v) == 0:
-                return []
-                
-            validated_action_items = []
-            for item in v:
-                if isinstance(item, GeneratedActionItem):
-                    validated_action_items.append(item)
-                elif isinstance(item, dict):
-                    try:
-                        validated_item = GeneratedActionItem(**item)
-                        validated_action_items.append(validated_item)
-                    except Exception as e:
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        logger.warning(f"GeneratedActionItem validation failed, keeping as dict: {e}")
-                        validated_action_items.append(item)
-                else:
-                    raise ValueError(f"Each action item must be a dict or GeneratedActionItem object, got {type(item)}")
-            return validated_action_items
-        if isinstance(v, dict):
-            if 'action_items' in v and isinstance(v['action_items'], list):
-                return cls.validate_action_items(v['action_items'])
-            try:
-                validated_item = GeneratedActionItem(**v)
-                return [validated_item]
-            except Exception:
-                return [v]
-
-        if isinstance(v, str):
-            try:
-                import json
-                parsed = json.loads(v)
-                if isinstance(parsed, list):
-                    return cls.validate_action_items(parsed)
-                return cls.validate_action_items([parsed]) if isinstance(parsed, dict) else []
-            except json.JSONDecodeError:
-                return []
-        return []
     
     @validator('distributed_to')
     def validate_distributed_to(cls, v):

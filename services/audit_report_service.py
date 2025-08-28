@@ -2,6 +2,7 @@
 Audit Report service using Repository pattern.
 """
 
+import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
@@ -83,9 +84,11 @@ class AuditReportService:
             if generated_before:
                 filters["generated_before"] = generated_before
 
-            return await self.report_repository.list(
+            reports = await self.report_repository.list(
                 skip=skip, limit=limit, filters=filters, order_by="-report_generated_at"
             )
+            # Deserialize JSON fields for client consumption
+            return [self._deserialize_report_fields(report) for report in reports]
         except ValidationException:
             raise
         except Exception as e:
@@ -100,7 +103,8 @@ class AuditReportService:
             user = await self.user_repository.get_by_id(user_id)
             if not user or not user.is_active:
                 raise ValidationException(detail="Invalid or inactive user", field="user_id", value=user_id)
-            return await self.report_repository.get_by_domains(domains)
+            reports = await self.report_repository.get_by_domains(domains)
+            return [self._deserialize_report_fields(report) for report in reports]
         except ValidationException:
             raise
         except Exception:
@@ -115,7 +119,8 @@ class AuditReportService:
             user = await self.user_repository.get_by_id(user_id)
             if not user or not user.is_active:
                 raise ValidationException(detail="Invalid or inactive user", field="user_id", value=user_id)
-            return await self.report_repository.get_by_domain(domain)
+            reports = await self.report_repository.get_by_domain(domain)
+            return [self._deserialize_report_fields(report) for report in reports]
         except ValidationException:
             raise
         except Exception:
@@ -134,6 +139,9 @@ class AuditReportService:
             report = await self.report_repository.get_by_id(report_id)
             if not report:
                 raise ResourceNotFoundException(resource_type="AuditReport", resource_id=report_id)
+            
+            # Deserialize JSON strings back to Python objects for client consumption
+            report = self._deserialize_report_fields(report)
             return report
         except (ResourceNotFoundException, ValidationException):
             raise
@@ -158,6 +166,9 @@ class AuditReportService:
                 report_data["user_id"] = user_id
 
             created = await self.report_repository.create(report_data)
+            
+            # Deserialize for return
+            created = self._deserialize_report_fields(created)
 
             # Business event logging
             log_business_event(
@@ -193,7 +204,7 @@ class AuditReportService:
             updated = await self.report_repository.update(report_id, update_data)
             if not updated:
                 raise ResourceNotFoundException(resource_type="AuditReport", resource_id=report_id)
-            return updated
+            return self._deserialize_report_fields(updated)
         except (ResourceNotFoundException, ValidationException):
             raise
         except Exception:
@@ -317,8 +328,10 @@ class AuditReportService:
                 total_potential_fines,
             )
             detailed_findings = self.generate_detailed_findings(chat_history, gaps, list(document_ids))
-            recommendations = self.generate_recommendations(gaps, session.compliance_domain)
-            action_items = self.generate_action_items(gaps)
+            recommendations_list = self.generate_recommendations(gaps, session.compliance_domain)
+            recommendations = json.dumps(recommendations_list)
+            action_items_list = self.generate_action_items(gaps)
+            action_items = json.dumps(action_items_list)
 
             compliance_rating = self._calculate_compliance_rating(gaps, total_questions)
             risk_score = self._calculate_risk_score(gaps)
@@ -370,6 +383,9 @@ class AuditReportService:
             }
 
             created = await self.report_repository.create(report_data)
+            
+            # Deserialize for return  
+            created = self._deserialize_report_fields(created)
 
             # Initial version snapshot
             create_audit_report_version(
@@ -626,6 +642,33 @@ class AuditReportService:
             return 0.0
         total = sum(weights.get(str(getattr(g, "risk_level", "medium")), 2) for g in gaps)
         return round((total / (len(gaps) * 4)) * 100.0, 2)
+
+    def _deserialize_report_fields(self, report: Dict[str, Any]) -> Dict[str, Any]:
+        """Deserialize JSON string fields back to Python objects for client consumption."""
+        if not report:
+            return report
+            
+        report_copy = report.copy()
+        
+        # Deserialize recommendations from JSON string to list
+        recommendations = report_copy.get("recommendations")
+        if isinstance(recommendations, str):
+            try:
+                report_copy["recommendations"] = json.loads(recommendations)
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(f"Failed to deserialize recommendations JSON: {recommendations}")
+                report_copy["recommendations"] = []
+        
+        # Deserialize action_items from JSON string to list
+        action_items = report_copy.get("action_items")
+        if isinstance(action_items, str):
+            try:
+                report_copy["action_items"] = json.loads(action_items)
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(f"Failed to deserialize action_items JSON: {action_items}")
+                report_copy["action_items"] = []
+        
+        return report_copy
 
     async def generate_recommendations(self, audit_session_id: str) -> str:
         """Generate AI recommendations for audit session based on compliance gaps and chat history."""
