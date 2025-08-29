@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 import logging
 from typing import Any, List, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query, Path, Body, Request, Header, Response, status
@@ -421,6 +422,20 @@ async def update_existing_audit_report(
     for field in ["compliance_gap_ids", "document_ids", "pdf_ingestion_ids"]:
         if field in update_dict and update_dict[field]:
             update_dict[field] = [str(uuid_val) for uuid_val in update_dict[field]]
+
+    # Serialize array fields to JSON strings for database storage
+    for field in ["recommendations", "action_items"]:
+        if field in update_dict and update_dict[field] is not None:
+            if isinstance(update_dict[field], (list, dict)):
+                update_dict[field] = json.dumps(update_dict[field])
+            elif isinstance(update_dict[field], str):
+                # If it's already a string, try to parse and re-serialize to ensure valid JSON
+                try:
+                    parsed = json.loads(update_dict[field])
+                    update_dict[field] = json.dumps(parsed)
+                except (json.JSONDecodeError, ValueError):
+                    # If it's not valid JSON, treat as plain string and wrap in array
+                    update_dict[field] = json.dumps([update_dict[field]])
 
     updated_report = await audit_report_service.update_report(report_id, update_dict, str(current_user.id))
 

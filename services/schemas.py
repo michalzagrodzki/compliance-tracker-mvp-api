@@ -872,8 +872,8 @@ class AuditReportUpdate(BaseModel):
     threat_intelligence_analysis: Optional[str] = None
     target_audience_summary: Optional[str] = None
     detailed_findings: Optional[List[DetailedFindings]] = None
-    recommendations: Optional[str] = None
-    action_items: Optional[str] = None
+    recommendations: Optional[Union[str, List[str]]] = None
+    action_items: Optional[Union[str, List[str]]] = None
     appendices: Optional[Dict[str, Any]] = None
     
     # Report generation settings
