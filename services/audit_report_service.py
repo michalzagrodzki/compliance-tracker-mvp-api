@@ -644,29 +644,45 @@ class AuditReportService:
         return round((total / (len(gaps) * 4)) * 100.0, 2)
 
     def _deserialize_report_fields(self, report: Dict[str, Any]) -> Dict[str, Any]:
-        """Deserialize JSON string fields back to Python objects for client consumption."""
+        """Deserialize JSON string fields back to formatted strings for frontend compatibility."""
         if not report:
             return report
             
         report_copy = report.copy()
         
-        # Deserialize recommendations from JSON string to list
+        # Deserialize recommendations from JSON string and format as string for frontend
         recommendations = report_copy.get("recommendations")
         if isinstance(recommendations, str):
             try:
-                report_copy["recommendations"] = json.loads(recommendations)
+                parsed_recommendations = json.loads(recommendations)
+                if isinstance(parsed_recommendations, list) and parsed_recommendations:
+                    # Format as numbered list for frontend compatibility
+                    formatted_items = []
+                    for i, item in enumerate(parsed_recommendations, 1):
+                        formatted_items.append(f"{i}. {item}")
+                    report_copy["recommendations"] = "\n".join(formatted_items)
+                else:
+                    report_copy["recommendations"] = ""
             except (json.JSONDecodeError, ValueError):
                 logger.warning(f"Failed to deserialize recommendations JSON: {recommendations}")
-                report_copy["recommendations"] = []
+                report_copy["recommendations"] = ""
         
-        # Deserialize action_items from JSON string to list
+        # Deserialize action_items from JSON string and format as string for frontend
         action_items = report_copy.get("action_items")
         if isinstance(action_items, str):
             try:
-                report_copy["action_items"] = json.loads(action_items)
+                parsed_action_items = json.loads(action_items)
+                if isinstance(parsed_action_items, list) and parsed_action_items:
+                    # Format as numbered list for frontend compatibility
+                    formatted_items = []
+                    for i, item in enumerate(parsed_action_items, 1):
+                        formatted_items.append(f"{i}. {item}")
+                    report_copy["action_items"] = "\n".join(formatted_items)
+                else:
+                    report_copy["action_items"] = ""
             except (json.JSONDecodeError, ValueError):
                 logger.warning(f"Failed to deserialize action_items JSON: {action_items}")
-                report_copy["action_items"] = []
+                report_copy["action_items"] = ""
         
         return report_copy
 
