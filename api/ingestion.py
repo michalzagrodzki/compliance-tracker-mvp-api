@@ -8,17 +8,7 @@ from security.endpoint_validator import compute_fingerprint, require_idempotency
 from security.upload_validation import validate_document_upload, upload_validator
 from config.config import settings
 from services.audit_log import create_audit_log
-from services.ingestion import (
-    ingest_pdf_sync,
-    list_pdf_ingestions,
-    list_pdf_ingestions_by_compliance_domains,
-    get_pdf_ingestion_by_id,
-    get_pdf_ingestions_by_compliance_domain,
-    get_pdf_ingestions_by_user,
-    get_pdf_ingestions_by_version,
-    search_pdf_ingestions,
-    delete_pdf_ingestion,
-)
+from dependencies import IngestionServiceDep
 from services.audit_sessions import (
     add_pdf_ingestion_to_session,
     get_pdf_ingestions_for_session,
@@ -28,10 +18,6 @@ from services.schemas import (
     PdfIngestionSearchRequest,
     PdfIngestionWithRelationship,
     AuditSessionPdfIngestionCreate,
-    AuditSessionPdfIngestionBulkCreate,
-    AuditSessionPdfIngestionBulkResponse,
-    AuditSessionPdfIngestionBulkRemove,
-    AuditSessionPdfIngestionBulkRemoveResponse,
     DocumentTagConstants,
 )
 
@@ -55,7 +41,7 @@ ALLOWED_FIELDS_UPLOAD = {
     status_code=201
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def upload_pdf(
+async def upload_pdf(
     request: Request,
     response: Response,
     file: UploadFile = File(..., description="PDF file to upload (max 50MB)"),
@@ -65,7 +51,8 @@ def upload_pdf(
     document_title: Optional[str] = Form(None, description="Document title (overrides PDF metadata)"),
     document_author: Optional[str] = Form(None, description="Document author (overrides PDF metadata)"),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
-    current_user: ValidatedUser = None
+    current_user: ValidatedUser = None,
+    ingestion_service: IngestionServiceDep = None,
 ):
     """
     Hardened PDF upload endpoint with comprehensive security controls.
@@ -174,14 +161,14 @@ def upload_pdf(
         )
         
         # Perform PDF ingestion with validated data
-        chunk_count, ingestion_id = ingest_pdf_sync(
+        chunk_count, ingestion_id = await ingestion_service.ingest_pdf_sync(
             file_path=file_path,
             compliance_domain=compliance_domain,
             document_version=document_version,
             uploaded_by=current_user.id,
             document_tags=parsed_tags,
             document_author=document_author,
-            document_title=document_title
+            document_title=document_title,
         )
         
         # Create comprehensive audit log entry using ingestion_id
@@ -273,11 +260,12 @@ def upload_pdf(
     response_model=List[Dict[str, Any]]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_all_pdf_ingestions(
+async def get_all_pdf_ingestions(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    ingestion_service: IngestionServiceDep = None,
 ) -> List[Dict[str, Any]]:
-    return list_pdf_ingestions(skip=skip, limit=limit)
+    return await ingestion_service.list_pdf_ingestions(skip=skip, limit=limit)
 
 @router.get("/compliance-domains",
     summary="Get PDF ingestions by compliance domains linked to user",
@@ -285,10 +273,11 @@ def get_all_pdf_ingestions(
     response_model=List[Dict[str, Any]]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_pdf_ingestions_by_domains(
+async def get_pdf_ingestions_by_domains(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
     current_user: ValidatedUser = None,
+    ingestion_service: IngestionServiceDep = None,
 ) -> List[Dict[str, Any]]:
     user_compliance_domains = getattr(current_user, 'compliance_domains', [])
     
@@ -311,7 +300,7 @@ def get_pdf_ingestions_by_domains(
         user_agent=None
     )
 
-    return list_pdf_ingestions_by_compliance_domains(
+    return await ingestion_service.list_pdf_ingestions_by_compliance_domains(
         compliance_domains=user_compliance_domains, skip=skip, limit=limit
     )
 
@@ -321,10 +310,11 @@ def get_pdf_ingestions_by_domains(
     response_model=Dict[str, Any]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_pdf_ingestion(
+async def get_pdf_ingestion(
     ingestion_id: str = Path(..., description="PDF ingestion UUID"),
+    ingestion_service: IngestionServiceDep = None,
 ) -> Dict[str, Any]:
-    return get_pdf_ingestion_by_id(ingestion_id)
+    return await ingestion_service.get_pdf_ingestion_by_id(ingestion_id)
 
 @router.get("/compliance-domain/{compliance_domain}",
     summary="Get PDF ingestions by compliance domain",
@@ -332,11 +322,12 @@ def get_pdf_ingestion(
     response_model=List[Dict[str, Any]]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_pdf_ingestions_by_domain(
+async def get_pdf_ingestions_by_domain(
     compliance_domain: str,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
-    current_user: ValidatedUser = None
+    current_user: ValidatedUser = None,
+    ingestion_service: IngestionServiceDep = None,
 ) -> List[Dict[str, Any]]:
     user_compliance_domains = getattr(current_user, 'compliance_domains', [])
     
@@ -346,45 +337,7 @@ def get_pdf_ingestions_by_domain(
             detail="Access denied to this compliance domain."
         )
     
-    return get_pdf_ingestions_by_compliance_domain(compliance_domain, skip, limit)
-
-@router.get("/user/{user_id}",
-    summary="Get PDF ingestions by user",
-    description="Get all PDF ingestions uploaded by a specific user",
-    response_model=List[Dict[str, Any]]
-)
-@authorize(allowed_roles=["admin"], check_active=True)
-def get_pdf_ingestions_by_user_endpoint(
-    user_id: str,
-    skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
-) -> List[Dict[str, Any]]:
-    return get_pdf_ingestions_by_user(user_id, skip, limit)
-
-@router.get("/version/{document_version}",
-    summary="Get PDF ingestions by version",
-    description="Get all PDF ingestions for a specific document version",
-    response_model=List[Dict[str, Any]]
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_pdf_ingestions_by_version_endpoint(
-    document_version: str,
-    skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
-    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
-    current_user: ValidatedUser = None
-) -> List[Dict[str, Any]]:
-    if compliance_domain:
-        user_compliance_domains = getattr(current_user, 'compliance_domains', [])
-        if compliance_domain not in user_compliance_domains:
-            raise HTTPException(
-                status_code=403,
-                detail="Access denied to this compliance domain."
-            )
-    
-    return get_pdf_ingestions_by_version(
-        document_version, skip, limit, compliance_domain
-    )
+    return await ingestion_service.get_pdf_ingestions_by_compliance_domain(compliance_domain, skip, limit)
 
 @router.get("/search",
     summary="Search PDF ingestions",
@@ -392,9 +345,10 @@ def get_pdf_ingestions_by_version_endpoint(
     response_model=List[PdfIngestionWithRelationship]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def search_pdf_ingestions_endpoint(
+async def search_pdf_ingestions_endpoint(
     search_request: PdfIngestionSearchRequest,
-    current_user: ValidatedUser = None
+    current_user: ValidatedUser = None,
+    ingestion_service: IngestionServiceDep = None,
 ) -> List[PdfIngestionWithRelationship]:
     # Filter by user's compliance domains
     if search_request.compliance_domain:
@@ -405,7 +359,7 @@ def search_pdf_ingestions_endpoint(
                 detail="Access denied to this compliance domain."
             )
     
-    return search_pdf_ingestions(
+    return await ingestion_service.search_pdf_ingestions(
         compliance_domain=search_request.compliance_domain,
         uploaded_by=search_request.uploaded_by,
         document_version=search_request.document_version,
@@ -416,20 +370,8 @@ def search_pdf_ingestions_endpoint(
         document_tags=search_request.document_tags,
         tags_match_mode=search_request.tags_match_mode,
         skip=search_request.skip,
-        limit=search_request.limit
+        limit=search_request.limit,
     )
-
-@router.delete("/{ingestion_id}",
-    summary="Delete PDF ingestion",
-    description="Delete a PDF ingestion and its associated documents",
-    response_model=Dict[str, Any]
-)
-@authorize(allowed_roles=["admin"], check_active=True)
-def delete_pdf_ingestion_endpoint(
-    ingestion_id: str,
-    current_user: ValidatedUser = None
-) -> Dict[str, Any]:
-    return delete_pdf_ingestion(ingestion_id, current_user.id)
 
 @router.get("/tags/constants",
     summary="Get predefined tag constants for PDF ingestions",
@@ -484,29 +426,6 @@ def add_pdf_ingestion_to_audit_session(
         notes=request_data.notes
     )
 
-@router.post("/audit-sessions/{session_id}/pdf-ingestions/bulk",
-    summary="Bulk add PDF ingestions to audit session",
-    description="Associate multiple PDF ingestions with an audit session",
-    response_model=AuditSessionPdfIngestionBulkResponse,
-    status_code=201
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def bulk_add_pdf_ingestions_to_audit_session(
-    session_id: str = Path(..., description="Audit session ID"),
-    request_data: AuditSessionPdfIngestionBulkCreate = Body(..., description="PDF ingestions to add"),
-    current_user: ValidatedUser = None
-) -> AuditSessionPdfIngestionBulkResponse:
-    from services.audit_sessions import bulk_add_pdf_ingestions_to_session
-    
-    result = bulk_add_pdf_ingestions_to_session(
-        session_id=session_id,
-        pdf_ingestion_ids=[str(pid) for pid in request_data.pdf_ingestion_ids],
-        added_by=str(current_user.id),
-        notes=request_data.notes
-    )
-    
-    return AuditSessionPdfIngestionBulkResponse(**result)
-
 @router.get("/audit-sessions/{session_id}",
     summary="Get PDF ingestions for audit session",
     description="Get all PDF ingestions associated with an audit session",
@@ -542,22 +461,3 @@ def remove_pdf_ingestion_from_audit_session(
         session_id=session_id,
         pdf_ingestion_id=pdf_ingestion_id
     )
-
-@router.delete("/audit-sessions/{session_id}/pdf-ingestions/bulk",
-    summary="Bulk remove PDF ingestions from audit session",
-    description="Remove multiple PDF ingestion associations from an audit session",
-    response_model=AuditSessionPdfIngestionBulkRemoveResponse
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def bulk_remove_pdf_ingestions_from_audit_session(
-    session_id: str = Path(..., description="Audit session ID"),
-    request_data: AuditSessionPdfIngestionBulkRemove = Body(..., description="PDF ingestions to remove"),
-) -> AuditSessionPdfIngestionBulkRemoveResponse:
-    from services.audit_sessions import bulk_remove_pdf_ingestions_from_session
-    
-    result = bulk_remove_pdf_ingestions_from_session(
-        session_id=session_id,
-        pdf_ingestion_ids=[str(pid) for pid in request_data.pdf_ingestion_ids]
-    )
-    
-    return AuditSessionPdfIngestionBulkRemoveResponse(**result)

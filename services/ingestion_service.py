@@ -208,7 +208,118 @@ class IngestionService:
             raise ResourceNotFoundException(resource_type="PdfIngestion", resource_id=ingestion_id)
         return item
 
+    # --- Convenience methods mirroring legacy services.ingestion API ---
+    async def list_pdf_ingestions(self, skip: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
+        items = await self.list(skip=skip, limit=limit, filters=PdfIngestionFilter())
+        return [i.to_dict() for i in items]
+
+    async def list_pdf_ingestions_by_compliance_domains(
+        self, compliance_domains: List[str], skip: int = 0, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        # Use Supabase IN filter for efficiency
+        res = (
+            self.ingestion_repo.supabase
+            .table(self.ingestion_repo.table_name)
+            .select("*")
+            .in_("compliance_domain", compliance_domains)
+            .order("ingested_at", desc=True)
+            .limit(limit)
+            .offset(skip)
+            .execute()
+        )
+        return res.data or []
+
+    async def get_pdf_ingestion_by_id(self, ingestion_id: str) -> Dict[str, Any]:
+        item = await self.get_by_id(ingestion_id)
+        return item.to_dict()
+
+    async def get_pdf_ingestions_by_compliance_domain(
+        self, compliance_domain: str, skip: int = 0, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        res = (
+            self.ingestion_repo.supabase
+            .table(self.ingestion_repo.table_name)
+            .select("*")
+            .eq("compliance_domain", compliance_domain)
+            .order("ingested_at", desc=True)
+            .limit(limit)
+            .offset(skip)
+            .execute()
+        )
+        return res.data or []
+
+    async def get_pdf_ingestions_by_user(
+        self, user_id: str, skip: int = 0, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        res = (
+            self.ingestion_repo.supabase
+            .table(self.ingestion_repo.table_name)
+            .select("*")
+            .eq("uploaded_by", user_id)
+            .order("ingested_at", desc=True)
+            .limit(limit)
+            .offset(skip)
+            .execute()
+        )
+        return res.data or []
+
+    async def get_pdf_ingestions_by_version(
+        self,
+        document_version: str,
+        skip: int = 0,
+        limit: int = 10,
+        exact_match: bool = False,
+    ) -> List[Dict[str, Any]]:
+        q = (
+            self.ingestion_repo.supabase
+            .table(self.ingestion_repo.table_name)
+            .select("*")
+        )
+        if exact_match:
+            q = q.eq("document_version", document_version)
+        else:
+            q = q.ilike("document_version", f"%{document_version}%")
+        res = q.order("ingested_at", desc=True).limit(limit).offset(skip).execute()
+        return res.data or []
+
+    async def search_pdf_ingestions(
+        self,
+        compliance_domain: Optional[str] = None,
+        uploaded_by: Optional[str] = None,
+        document_version: Optional[str] = None,
+        processing_status: Optional[str] = None,
+        filename_search: Optional[str] = None,
+        ingested_after: Optional[datetime] = None,
+        ingested_before: Optional[datetime] = None,
+        document_tags: Optional[List[str]] = None,
+        tags_match_mode: str = "any",
+        skip: int = 0,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        filters = PdfIngestionFilter(
+            compliance_domain=compliance_domain,
+            uploaded_by=uploaded_by,
+            document_version=document_version,
+            processing_status=processing_status,
+            filename_search=filename_search,
+            ingested_after=ingested_after,
+            ingested_before=ingested_before,
+            document_tags=document_tags,
+            tags_match_mode=tags_match_mode,
+        )
+        items = await self.list(skip=skip, limit=limit, filters=filters)
+        return [i.to_dict() for i in items]
+
+    async def delete_pdf_ingestion(self, ingestion_id: str, soft_delete: bool = True) -> Dict[str, Any]:
+        if soft_delete:
+            item = await self.soft_delete(ingestion_id)
+            return item.to_dict()
+        else:
+            ok = await self.ingestion_repo.delete(ingestion_id)
+            if not ok:
+                raise ResourceNotFoundException(resource_type="PdfIngestion", resource_id=ingestion_id)
+            return {"message": f"PDF ingestion {ingestion_id} permanently deleted"}
+
 
 def create_ingestion_service(repo: PdfIngestionRepository, user_repo: UserRepository) -> IngestionService:
     return IngestionService(repo, user_repo)
-
