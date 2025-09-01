@@ -102,7 +102,8 @@ def get_compliance_gap_service() -> ComplianceGapService:
     """Get singleton ComplianceGapService with dependencies."""
     gap_repo = get_compliance_gap_repository()
     user_repo = get_user_repository()
-    return create_compliance_gap_service(gap_repo, user_repo)
+    chat_history_repo = get_chat_history_repository()
+    return create_compliance_gap_service(gap_repo, user_repo, chat_history_repo)
 
 
 @lru_cache()

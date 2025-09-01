@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from db.supabase_client import create_supabase_client
 from config.config import settings
 from services.audit_report_versions import create_audit_report_version
-from services.compliance_gaps import get_gaps_by_audit_session, get_compliance_gaps_statistics
+from services.compliance_gaps import get_gaps_by_audit_session
 from services.chat_history import get_audit_session_history
 from services.audit_sessions import get_audit_session_by_id
 from services.schemas import AuditReportResponse, AuditReportUpdate, AuditReportVersionCreate, ChatHistoryItem, ComplianceGap, ComplianceImpact, ConversationAnalysis, DetailedFindings, DocumentCoverage, GapAnalysis, GapType, GapsByType, GeneratedActionItem, GeneratedRecommendation, PriorityLevel, RiskLevel

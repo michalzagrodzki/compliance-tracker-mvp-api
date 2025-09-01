@@ -6,21 +6,11 @@ from slowapi.util import get_remote_address
 from auth.decorators import ValidatedUser, authorize
 from policies.compliance_gaps import ALLOWED_FIELDS_CREATE_DIRECT, ALLOWED_FIELDS_CREATE_FROM_CHAT, ALLOWED_FIELDS_UPDATE
 from security.endpoint_validator import compute_fingerprint, require_idempotency, store_idempotency, normalize_user_agent, ensure_json_request
-from services.compliance_gaps import (
-    list_compliance_gaps,
-    list_compliance_gaps_by_compliance_domains,
-    get_compliance_gap_by_id,
-    create_compliance_gap,
-    update_compliance_gap,
-    update_gap_status,
-    assign_gap_to_user,
-    mark_gap_reviewed,
-    get_gaps_by_domain,
-    get_gaps_by_user,
-    get_gaps_by_audit_session,
-    get_compliance_gaps_statistics,
+from dependencies import (
+    get_compliance_recommendation_service,
+    get_compliance_gap_repository,
+    ComplianceGapServiceDep,
 )
-from dependencies import get_compliance_recommendation_service, get_compliance_gap_repository
 from services.schemas import (
     ComplianceGapCreate,
     ComplianceGapFromChatHistoryRequest,
@@ -29,7 +19,6 @@ from services.schemas import (
     ComplianceRecommendationRequest,
     ComplianceRecommendationResponse,
 )
-
 
 # --- constants / helpers ---
 IDEMPOTENCY_TTL_SECONDS = 24 * 3600
@@ -46,7 +35,7 @@ ALLOWED_FIELDS_CREATE = {
     "potential_fine_amount",
     "related_documents",
     "search_terms_used",
-    "chat_history_id",  # only when creation_method == "from_chat_history"
+    "chat_history_id",
 }
 
 router = APIRouter(tags=["Compliance Gaps"])
@@ -59,7 +48,8 @@ limiter = Limiter(key_func=get_remote_address)
     tags=["Compliance Gaps"]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_all_compliance_gaps(
+async def get_all_compliance_gaps(
+    service: ComplianceGapServiceDep,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
     compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
@@ -71,9 +61,9 @@ def get_all_compliance_gaps(
     audit_session_id: Optional[str] = Query(None, description="Filter by audit session"),
     detection_method: Optional[str] = Query(None, description="Filter by detection method"),
     regulatory_requirement: Optional[bool] = Query(None, description="Filter by regulatory requirement status"),
-    current_user: ValidatedUser = None
+    current_user: ValidatedUser = None,
 ) -> List[Dict[str, Any]]:
-    return list_compliance_gaps(
+    gaps = await service.list_compliance_gaps(
         skip=skip,
         limit=limit,
         compliance_domain=compliance_domain,
@@ -84,9 +74,9 @@ def get_all_compliance_gaps(
         user_id=user_id,
         audit_session_id=audit_session_id,
         detection_method=detection_method,
-        regulatory_requirement=regulatory_requirement
+        regulatory_requirement=regulatory_requirement,
     )
-
+    return [g.model_dump() if hasattr(g, "model_dump") else dict(g) for g in gaps]
 
 @router.get("/compliance-gaps/compliance-domains",
     summary="List compliance gaps by compliance domains linked to user",
@@ -95,10 +85,11 @@ def get_all_compliance_gaps(
     tags=["Compliance Gaps"]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_compliance_gaps_by_compliance_domains(
+async def get_compliance_gaps_by_compliance_domains(
+    service: ComplianceGapServiceDep,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
-    current_user: ValidatedUser = None
+    current_user: ValidatedUser = None,
 ) -> List[Dict[str, Any]]:
     user_compliance_domains = getattr(current_user, 'compliance_domains', [])
     
@@ -107,8 +98,8 @@ def get_compliance_gaps_by_compliance_domains(
             status_code=403,
             detail="Access denied."
         )
-    return list_compliance_gaps_by_compliance_domains(user_compliance_domains, skip, limit)
-
+    gaps = await service.list_compliance_gaps_by_compliance_domains(user_compliance_domains, skip, limit)
+    return [g.model_dump() if hasattr(g, "model_dump") else dict(g) for g in gaps]
 
 @router.get("/compliance-gaps/{gap_id}",
     summary="Get compliance gap by ID",
@@ -117,11 +108,12 @@ def get_compliance_gaps_by_compliance_domains(
     tags=["Compliance Gaps"]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_compliance_gap(
+async def get_compliance_gap(
+    service: ComplianceGapServiceDep,
     gap_id: str = Path(..., description="Compliance gap UUID"),
 ) -> Dict[str, Any]:
-    return get_compliance_gap_by_id(gap_id)
-
+    gap = await service.get_compliance_gap_by_id(gap_id)
+    return gap.model_dump() if hasattr(gap, "model_dump") else dict(gap)
 
 @router.post("/compliance-gaps",
     summary="Create new compliance gap",
@@ -131,7 +123,8 @@ def get_compliance_gap(
     status_code=201
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def create_new_compliance_gap(
+async def create_new_compliance_gap(
+    service: ComplianceGapServiceDep,
     request: Request,
     response: Response,
     request_data: Union[ComplianceGapCreate, ComplianceGapFromChatHistoryRequest] = Body(
@@ -140,7 +133,7 @@ def create_new_compliance_gap(
         description="Either a complete gap definition or a reference to chat history"
     ),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
-    current_user: ValidatedUser = None
+    current_user: ValidatedUser = None,
 ) -> Dict[str, Any]:
     ensure_json_request(request)
     ua = normalize_user_agent(request.headers.get("user-agent"))
@@ -165,7 +158,8 @@ def create_new_compliance_gap(
         response.headers["Location"] = cached.get("location", "")
         return cached["body"]
     
-    created = create_compliance_gap(payload | {"user_agent": ua})
+    created_gap = await service.create_compliance_gap(payload | {"user_agent": ua})
+    created = created_gap.model_dump() if hasattr(created_gap, "model_dump") else dict(created_gap)
     location = f"/v1/compliance-gaps/{created['id']}"
     body = {"data": created, "meta": {"message": "Compliance gap created"}}
 
@@ -174,7 +168,6 @@ def create_new_compliance_gap(
     response.headers["Location"] = location
     return body
 
-
 @router.patch("/compliance-gaps/{gap_id}",
     summary="Update compliance gap",
     description="Update an existing compliance gap with new information",
@@ -182,13 +175,14 @@ def create_new_compliance_gap(
     tags=["Compliance Gaps"]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def update_existing_compliance_gap(
+async def update_existing_compliance_gap(
+    service: ComplianceGapServiceDep,
     request: Request,
     response: Response,
     gap_id: str = Path(..., description="Compliance gap UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
     gap_update: ComplianceGapUpdate = Body(..., description="Gap update data"),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
-    current_user: ValidatedUser = None
+    current_user: ValidatedUser = None,
 ) -> Dict[str, Any]:
     # NIST SP 800-53 SI-10: Input validation
     ensure_json_request(request)
@@ -220,11 +214,11 @@ def update_existing_compliance_gap(
         return cached["body"]
     
     # Perform update with filtered data
-    updated = update_compliance_gap(
-        gap_id=gap_id, 
-        update_data=filtered_payload | {"user_agent": ua}
+    updated_gap = await service.update_compliance_gap(
+        gap_id=gap_id,
+        update_data=filtered_payload | {"user_agent": ua},
     )
-    
+    updated = updated_gap.model_dump() if hasattr(updated_gap, "model_dump") else dict(updated_gap)
     body = {"data": updated, "meta": {"message": "Compliance gap updated"}}
     
     # Store idempotency result
@@ -235,7 +229,6 @@ def update_existing_compliance_gap(
     
     return body
 
-
 @router.put("/compliance-gaps/{gap_id}/status",
     summary="Update compliance gap status",
     description="Update the status of a compliance gap",
@@ -243,13 +236,14 @@ def update_existing_compliance_gap(
     tags=["Compliance Gaps"]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def update_compliance_gap_status(
+async def update_compliance_gap_status(
+    service: ComplianceGapServiceDep,
     request: Request,
     response: Response,
     gap_id: str = Path(..., description="Compliance gap UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
     status_update: ComplianceGapStatusUpdate = Body(..., description="Status update data"),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
-    current_user: ValidatedUser = None
+    current_user: ValidatedUser = None,
 ) -> Dict[str, Any]:
     # NIST SP 800-53 SI-10: Input validation
     ensure_json_request(request)
@@ -272,12 +266,12 @@ def update_compliance_gap_status(
         return cached["body"]
     
     # Perform status update
-    updated = update_gap_status(
-        gap_id=gap_id, 
-        new_status=status_update.status, 
-        resolution_notes=status_update.resolution_notes
+    updated_gap = await service.update_gap_status(
+        gap_id=gap_id,
+        new_status=status_update.status,
+        resolution_notes=status_update.resolution_notes,
     )
-    
+    updated = updated_gap.model_dump() if hasattr(updated_gap, "model_dump") else dict(updated_gap)
     body = {"data": updated, "meta": {"message": "Compliance gap status updated", "user_agent": ua}}
     
     # Store idempotency result
@@ -288,59 +282,6 @@ def update_compliance_gap_status(
     
     return body
 
-
-@router.put("/compliance-gaps/{gap_id}/assign",
-    summary="Assign compliance gap",
-    description="Assign a compliance gap to a user",
-    response_model=Dict[str, Any],
-    tags=["Compliance Gaps"]
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def assign_compliance_gap(
-    request: Request,
-    response: Response,
-    gap_id: str = Path(..., description="Compliance gap UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
-    assigned_user_id: str = Body(..., embed=True, description="User ID to assign gap to"),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
-    current_user: ValidatedUser = None
-) -> Dict[str, Any]:
-    # NIST SP 800-53 SI-10: Input validation
-    ensure_json_request(request)
-    ua = normalize_user_agent(request.headers.get("user-agent"))
-    
-    # Validate assigned_user_id is not empty
-    if not assigned_user_id or not assigned_user_id.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="assigned_user_id cannot be empty"
-        )
-    
-    # Idempotency protection for assignment operations
-    fingerprint = compute_fingerprint({
-        "gap_id": gap_id, 
-        "operation": "assign", 
-        "assigned_user_id": assigned_user_id.strip()
-    })
-    repo = request.app.state.idempotency_repo
-    cached = require_idempotency(repo, idempotency_key, fingerprint)
-    
-    if cached:
-        return cached["body"]
-    
-    # Perform assignment
-    updated = assign_gap_to_user(gap_id=gap_id, assigned_to=assigned_user_id.strip())
-    
-    body = {"data": updated, "meta": {"message": "Compliance gap assigned", "user_agent": ua}}
-    
-    # Store idempotency result
-    store_idempotency(
-        repo, idempotency_key, fingerprint, 
-        {"body": body}, IDEMPOTENCY_TTL_SECONDS
-    )
-    
-    return body
-
-
 @router.put("/compliance-gaps/{gap_id}/review",
     summary="Mark compliance gap as reviewed",
     description="Mark a compliance gap as reviewed by the current user",
@@ -348,12 +289,13 @@ def assign_compliance_gap(
     tags=["Compliance Gaps"]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def review_compliance_gap(
+async def review_compliance_gap(
+    service: ComplianceGapServiceDep,
     request: Request,
     response: Response,
     gap_id: str = Path(..., description="Compliance gap UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
-    current_user: ValidatedUser = None
+    current_user: ValidatedUser = None,
 ) -> Dict[str, Any]:
     # NIST SP 800-53 SI-10: Input validation
     ensure_json_request(request)
@@ -372,8 +314,8 @@ def review_compliance_gap(
         return cached["body"]
     
     # Perform review marking
-    updated = mark_gap_reviewed(gap_id=gap_id)
-    
+    updated_gap = await service.mark_gap_reviewed(gap_id=gap_id)
+    updated = updated_gap.model_dump() if hasattr(updated_gap, "model_dump") else dict(updated_gap)
     body = {"data": updated, "meta": {"message": "Compliance gap marked as reviewed", "user_agent": ua}}
     
     # Store idempotency result
@@ -384,45 +326,6 @@ def review_compliance_gap(
     
     return body
 
-@router.get("/compliance-domains/{domain_code}/gaps",
-    summary="Get compliance gaps by domain",
-    description="Get all compliance gaps for a specific compliance domain",
-    response_model=List[Dict[str, Any]],
-    tags=["Compliance Gaps"]
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_domain_compliance_gaps(
-    domain_code: str,
-    skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
-    current_user: ValidatedUser = None
-) -> List[Dict[str, Any]]:
-    user_compliance_domains = getattr(current_user, 'compliance_domains', [])
-    
-    if domain_code not in user_compliance_domains:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied to this compliance domain."
-        )
-    
-    return get_gaps_by_domain(domain_code, skip, limit)
-
-
-@router.get("/users/{user_id}/gaps",
-    summary="Get compliance gaps by user",
-    description="Get all compliance gaps assigned to or created by a specific user",
-    response_model=List[Dict[str, Any]],
-    tags=["Compliance Gaps"]
-)
-@authorize(allowed_roles=["admin"], check_active=True)
-def get_user_compliance_gaps(
-    user_id: str,
-    skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
-) -> List[Dict[str, Any]]:
-    return get_gaps_by_user(user_id, skip, limit)
-
-
 @router.get("/audit-sessions/{audit_session_id}/gaps",
     summary="Get compliance gaps by audit session",
     description="Get all compliance gaps associated with a specific audit session",
@@ -430,34 +333,12 @@ def get_user_compliance_gaps(
     tags=["Compliance Gaps"]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_audit_session_compliance_gaps(
+async def get_audit_session_compliance_gaps(
     audit_session_id: str,
+    service: ComplianceGapServiceDep,
 ) -> List[Dict[str, Any]]:
-    return get_gaps_by_audit_session(audit_session_id)
-
-
-@router.get("/compliance-gaps/statistics",
-    summary="Get compliance gaps statistics",
-    description="Get aggregated statistics about compliance gaps",
-    response_model=Dict[str, Any],
-    tags=["Compliance Gaps"]
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_compliance_gap_statistics(
-    compliance_domain: Optional[str] = Query(None, description="Filter statistics by compliance domain"),
-    current_user: ValidatedUser = None
-) -> Dict[str, Any]:
-    if compliance_domain:
-        user_compliance_domains = getattr(current_user, 'compliance_domains', [])
-        if compliance_domain not in user_compliance_domains:
-            raise HTTPException(
-                status_code=403,
-                detail="Access denied to this compliance domain."
-            )
-    
-    return get_compliance_gaps_statistics(compliance_domain)
-
-# === AI-Powered Compliance Recommendation Endpoints ===
+    gaps = await service.get_gaps_by_audit_session(audit_session_id)
+    return [g.model_dump() if hasattr(g, "model_dump") else dict(g) for g in gaps]
 
 @router.post("/compliance-gaps/recommendation",
     response_model=ComplianceRecommendationResponse,
@@ -504,7 +385,6 @@ async def create_compliance_recommendation(
             },
         )
 
-    # Otherwise, do not create a new compliance gap. Return an empty recommendation result.
     chat = request_data.chat_history_item
     try:
         chat_id_int = int(chat.id) if chat and getattr(chat, "id", None) else 0
@@ -527,27 +407,4 @@ async def create_compliance_recommendation(
             "service_version": "repository_pattern_v1",
             "note": "No gap_id provided; returning empty recommendation"
         },
-    )
-
-@router.post("/compliance-gaps/remediation-plan",
-    summary="Generate remediation plan for multiple gaps",
-    description="Generate a comprehensive remediation plan for multiple compliance gaps",
-    response_model=Dict[str, Any],
-    tags=["AI Recommendations"]
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-async def generate_remediation_plan(
-    gap_ids: List[str] = Body(..., description="List of compliance gap UUIDs"),
-    timeline_weeks: int = Body(12, description="Target timeline in weeks"),
-    resource_constraints: Optional[Dict[str, str]] = Body(None, description="Resource constraints and limitations"),
-    current_user: ValidatedUser = None,
-    recommendation_service = Depends(get_compliance_recommendation_service)
-) -> Dict[str, Any]:
-    """Generate a comprehensive remediation plan for multiple compliance gaps."""
-    
-    return await recommendation_service.generate_remediation_plan(
-        gap_ids=gap_ids,
-        user_id=current_user.id,
-        timeline_weeks=timeline_weeks,
-        resource_constraints=resource_constraints or {}
     )

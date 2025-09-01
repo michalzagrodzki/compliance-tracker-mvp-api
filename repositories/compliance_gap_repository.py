@@ -492,33 +492,6 @@ class ComplianceGapRepository(SupabaseRepository[ComplianceGap]):
                 context={"compliance_domain": compliance_domain}
             )
 
-    async def get_overdue_gaps(self, skip: int = 0, limit: int = 100) -> List[ComplianceGap]:
-        """Get all overdue compliance gaps."""
-        try:
-            now = datetime.utcnow().isoformat()
-            
-            result = self.supabase.table(self.table_name)\
-                .select("*")\
-                .lt("due_date", now)\
-                .neq("status", "resolved")\
-                .neq("status", "false_positive")\
-                .neq("status", "accepted_risk")\
-                .order("due_date", desc=False)\
-                .range(skip, skip + limit - 1)\
-                .execute()
-            
-            gaps = [ComplianceGap.from_dict(gap_data) for gap_data in result.data]
-            
-            logger.debug(f"Found {len(gaps)} overdue compliance gaps")
-            return gaps
-            
-        except Exception as e:
-            logger.error(f"Failed to get overdue compliance gaps: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to retrieve overdue compliance gaps",
-                error_code="COMPLIANCE_GAP_OVERDUE_RETRIEVAL_FAILED"
-            )
-
     async def get_critical_gaps(self, skip: int = 0, limit: int = 100) -> List[ComplianceGap]:
         """Get all critical compliance gaps."""
         try:
