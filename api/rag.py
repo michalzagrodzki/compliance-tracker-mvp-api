@@ -13,7 +13,8 @@ from security.input_validator import safe_stream, validate_and_secure_query_requ
 from security.endpoint_validator import ensure_json_request, normalize_user_agent, compute_fingerprint, require_idempotency, stable_fingerprint, store_idempotency
 from services.authentication import authenticate_and_authorize
 from services.audit_sessions import get_audit_session_by_id, update_audit_session
-from services.history import get_history
+from dependencies import ChatHistoryServiceDep
+from entities.chat_history import ChatHistoryFilter
 from services.schemas import QueryRequest, QueryResponse
 from dependencies import RAGServiceDep
 from common.exceptions import ValidationException, AuthorizationException, BusinessLogicException
@@ -238,6 +239,7 @@ async def query_stream(
     request: Request,
     response: Response,
     rag_service: RAGServiceDep,
+    history_service: ChatHistoryServiceDep,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False)
 ):
     """
@@ -327,11 +329,17 @@ async def query_stream(
                 media_type="text/markdown; charset=utf-8",
                 headers=cached.get("headers", {})
             )
-        history = get_history(
+        # Build recent conversation history using the ChatHistoryService (DI)
+        history_filters = ChatHistoryFilter(
             conversation_id=conversation_id,
             audit_session_id=audit_session_id,
-            compliance_domain=compliance_domain
+            compliance_domain=compliance_domain,
         )
+        recent_items = await history_service.list(skip=0, limit=10, filters=history_filters)
+        history = [
+            {"question": item.question, "answer": item.answer}
+            for item in recent_items
+        ]
         def event_generator() -> Iterator[Union[str, Dict[str, Any]]]:
             stream_content = []
             try:
