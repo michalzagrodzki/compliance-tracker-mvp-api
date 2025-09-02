@@ -31,7 +31,8 @@ from services.audit_report_distributions import (
     list_audit_report_distributions,
     create_audit_report_distribution,
 )
-from services.audit_sessions import update_audit_session
+from dependencies import AuditSessionServiceDep
+from entities.audit_session import AuditSessionUpdate
 from services.schemas import (
     AuditReportCreate,
     AuditReportUpdate,
@@ -172,6 +173,7 @@ async def create_new_audit_report(
     report_data: AuditReportCreate = Body(..., description="Audit report data"),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     audit_report_service: AuditReportServiceDep = None,
+    audit_session_service: AuditSessionServiceDep = None,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
     """Create new audit report with enhanced security controls."""
@@ -282,9 +284,12 @@ async def create_new_audit_report(
             )
 
         try:
-            update_audit_session(
-                session_id=report_data.audit_session_id,
-                audit_report=created_report["id"]
+            await audit_session_service.update_session(
+                session_id=str(report_data.audit_session_id),
+                update_data=AuditSessionUpdate(audit_report=str(created_report["id"])),
+                user_id=current_user.id,
+                ip_address=ip_address,
+                user_agent=ua
             )
         except Exception as e:
             logger.error(f"Error updating audit session: {str(e)}", extra={

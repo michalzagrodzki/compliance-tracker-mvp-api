@@ -9,10 +9,7 @@ from security.upload_validation import validate_document_upload, upload_validato
 from config.config import settings
 from services.audit_log import create_audit_log
 from dependencies import IngestionServiceDep
-from services.audit_sessions import (
-    add_pdf_ingestion_to_session,
-    get_pdf_ingestions_for_session,
-)
+from dependencies import AuditSessionServiceDep
 from services.schemas import (
     UploadResponse,
     PdfIngestionSearchRequest,
@@ -414,11 +411,16 @@ def get_tag_constants_endpoint() -> Dict[str, Any]:
     status_code=201
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def add_pdf_ingestion_to_audit_session(
+async def add_pdf_ingestion_to_audit_session(
     session_id: str = Path(..., description="Audit session ID"),
     request_data: AuditSessionPdfIngestionCreate = Body(..., description="PDF ingestion to add"),
-    current_user: ValidatedUser = None
+    current_user: ValidatedUser = None,
+    audit_session_service: AuditSessionServiceDep = None,
 ) -> Dict[str, Any]:
+    # Ensure the session exists and the user has access
+    await audit_session_service.get_session_by_id(session_id, current_user.id)
+    # Delegate to legacy relationship method (migration in progress)
+    from services.audit_sessions import add_pdf_ingestion_to_session
     return add_pdf_ingestion_to_session(
         session_id=session_id,
         pdf_ingestion_id=str(request_data.pdf_ingestion_id),
@@ -432,17 +434,21 @@ def add_pdf_ingestion_to_audit_session(
     response_model=List[PdfIngestionWithRelationship]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def get_audit_session_pdf_ingestions(
+async def get_audit_session_pdf_ingestions(
     session_id: str = Path(..., description="Audit session ID"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: ValidatedUser = None,
+    audit_session_service: AuditSessionServiceDep = None,
 ) -> List[PdfIngestionWithRelationship]:
+    # Ensure the session exists and the user has access
+    await audit_session_service.get_session_by_id(session_id, current_user.id)
+    from services.audit_sessions import get_pdf_ingestions_for_session
     results = get_pdf_ingestions_for_session(
         session_id=session_id,
         skip=skip,
         limit=limit
     )
-    
     return [PdfIngestionWithRelationship(**item) for item in results]
 
 @router.delete("/audit-sessions/{session_id}/pdf-ingestions/{pdf_ingestion_id}",
@@ -451,12 +457,15 @@ def get_audit_session_pdf_ingestions(
     response_model=Dict[str, Any]
 )
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def remove_pdf_ingestion_from_audit_session(
+async def remove_pdf_ingestion_from_audit_session(
     session_id: str = Path(..., description="Audit session ID"),
     pdf_ingestion_id: str = Path(..., description="PDF ingestion ID"),
+    current_user: ValidatedUser = None,
+    audit_session_service: AuditSessionServiceDep = None,
 ) -> Dict[str, Any]:
+    # Ensure the session exists and the user has access
+    await audit_session_service.get_session_by_id(session_id, current_user.id)
     from services.audit_sessions import remove_pdf_ingestion_from_session
-    
     return remove_pdf_ingestion_from_session(
         session_id=session_id,
         pdf_ingestion_id=pdf_ingestion_id

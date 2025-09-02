@@ -236,85 +236,6 @@ class AuditSessionService:
                 context={"session_id": session_id}
             )
 
-    async def delete_session(
-        self,
-        session_id: str,
-        user_id: str,
-        soft_delete: bool = True,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None
-    ) -> bool:
-        """Delete an audit session with access control."""
-        try:
-            import time
-            start_time = time.time()
-            
-            # Get existing session to check access
-            existing_session = await self.get_session_by_id(session_id, user_id)
-            
-            # Validate user exists
-            user = await self.user_repository.get_by_id(user_id)
-            if not user or not user.is_active:
-                raise ValidationException(
-                    detail="Invalid or inactive user",
-                    field="user_id",
-                    value=user_id
-                )
-            
-            # Check access rights - only admins can delete sessions (or session owners for soft delete)
-            if not user.is_admin():
-                if not soft_delete:
-                    raise AuthorizationException(
-                        detail="Only administrators can permanently delete audit sessions",
-                        error_code="ADMIN_REQUIRED_FOR_HARD_DELETE"
-                    )
-                elif existing_session.user_id != user_id:
-                    raise AuthorizationException(
-                        detail="Access denied to delete audit session",
-                        error_code="SESSION_DELETION_DENIED"
-                    )
-            
-            # Delete the session
-            success = await self.session_repository.delete(session_id, soft_delete)
-            
-            if success:
-                # Log business event
-                log_business_event(
-                    event_type="AUDIT_SESSION_DELETED",
-                    entity_type="audit_session",
-                    entity_id=session_id,
-                    action="delete",
-                    user_id=user_id,
-                    details={
-                        "session_name": existing_session.session_name,
-                        "soft_delete": soft_delete,
-                        "compliance_domain": existing_session.compliance_domain,
-                        "ip_address": ip_address,
-                        "user_agent": user_agent
-                    }
-                )
-                
-                # Log performance
-                duration_ms = (time.time() - start_time) * 1000
-                log_performance(
-                    operation="delete_audit_session",
-                    duration_ms=duration_ms,
-                    success=True,
-                    item_count=1
-                )
-            
-            return success
-            
-        except (ResourceNotFoundException, ValidationException, AuthorizationException):
-            raise
-        except Exception as e:
-            logger.error(f"Failed to delete audit session {session_id}: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to delete audit session",
-                error_code="AUDIT_SESSION_DELETION_FAILED",
-                context={"session_id": session_id}
-            )
-
     async def list_sessions(
         self,
         user_id: str,
@@ -368,67 +289,6 @@ class AuditSessionService:
                 error_code="AUDIT_SESSION_LIST_FAILED"
             )
 
-    async def search_sessions(
-        self,
-        user_id: str,
-        compliance_domain: Optional[str] = None,
-        is_active: Optional[bool] = None,
-        started_after: Optional[datetime] = None,
-        started_before: Optional[datetime] = None,
-        session_name_query: Optional[str] = None,
-        skip: int = 0,
-        limit: int = 100
-    ) -> List[AuditSession]:
-        """Search audit sessions with access control."""
-        try:
-            # Validate user exists
-            user = await self.user_repository.get_by_id(user_id)
-            if not user or not user.is_active:
-                raise ValidationException(
-                    detail="Invalid or inactive user",
-                    field="user_id",
-                    value=user_id
-                )
-            
-            # Apply access control - non-admin users can only see their own sessions
-            search_user_id = user_id if not user.is_admin() else None
-            
-            # Check domain access for non-admin users
-            if not user.is_admin():
-                if compliance_domain and not user.can_access_domain(compliance_domain):
-                    # Return empty list if requesting inaccessible domain
-                    return []
-            
-            # Search sessions
-            sessions = await self.session_repository.search(
-                compliance_domain=compliance_domain,
-                user_id=search_user_id,
-                is_active=is_active,
-                started_after=started_after,
-                started_before=started_before,
-                session_name_query=session_name_query,
-                skip=skip,
-                limit=limit
-            )
-            
-            # Additional domain filtering for non-admin users
-            if not user.is_admin():
-                sessions = [
-                    session for session in sessions
-                    if user.can_access_domain(session.compliance_domain)
-                ]
-            
-            return sessions
-            
-        except ValidationException:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to search audit sessions for user {user_id}: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to search audit sessions",
-                error_code="AUDIT_SESSION_SEARCH_FAILED"
-            )
-
     async def increment_session_queries(
         self,
         session_id: str,
@@ -455,69 +315,6 @@ class AuditSessionService:
                 detail="Failed to increment session query count",
                 error_code="AUDIT_SESSION_QUERY_INCREMENT_FAILED",
                 context={"session_id": session_id}
-            )
-
-    async def get_session_statistics(
-        self,
-        user_id: str,
-        compliance_domain: Optional[str] = None,
-        target_user_id: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
-    ) -> AuditSessionStatistics:
-        """Get audit session statistics with access control."""
-        try:
-            # Validate user exists
-            user = await self.user_repository.get_by_id(user_id)
-            if not user or not user.is_active:
-                raise ValidationException(
-                    detail="Invalid or inactive user",
-                    field="user_id",
-                    value=user_id
-                )
-            
-            # Apply access control
-            stats_user_id = target_user_id
-            if not user.is_admin():
-                # Non-admin users can only see their own stats
-                stats_user_id = user_id
-                
-                # Check domain access
-                if compliance_domain and not user.can_access_domain(compliance_domain):
-                    # Return empty statistics for inaccessible domain
-                    return AuditSessionStatistics(
-                        total_sessions=0,
-                        active_sessions=0,
-                        completed_sessions=0,
-                        total_queries=0,
-                        avg_queries_per_session=0,
-                        sessions_by_domain={},
-                        sessions_by_user={},
-                        filters_applied={
-                            "compliance_domain": compliance_domain,
-                            "user_id": stats_user_id,
-                            "start_date": start_date.isoformat() if start_date else None,
-                            "end_date": end_date.isoformat() if end_date else None
-                        }
-                    )
-            
-            # Get statistics from repository
-            statistics = await self.session_repository.get_statistics(
-                compliance_domain=compliance_domain,
-                user_id=stats_user_id,
-                start_date=start_date,
-                end_date=end_date
-            )
-            
-            return statistics
-            
-        except ValidationException:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to get audit session statistics for user {user_id}: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to retrieve audit session statistics",
-                error_code="AUDIT_SESSION_STATISTICS_FAILED"
             )
 
     async def close_session(
@@ -587,7 +384,6 @@ class AuditSessionService:
                 error_code="AUDIT_SESSION_OPEN_FAILED",
                 context={"session_id": session_id}
             )
-
 
 # Factory function
 def create_audit_session_service(

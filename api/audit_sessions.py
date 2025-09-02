@@ -1,4 +1,4 @@
-from typing import Any, List, Dict, Optional, Union
+from typing import Any, List, Dict, Optional
 from fastapi import APIRouter, Query, Path, Request, HTTPException, Body, Header, Response
 
 from auth.decorators import ValidatedUser, authorize
@@ -6,14 +6,12 @@ from security.endpoint_validator import compute_fingerprint, require_idempotency
 from dependencies import AuditSessionServiceDep
 from entities.audit_session import (
     AuditSessionCreate,
-    AuditSessionUpdate,
     AuditSessionFilter,
 )
 from services.schemas import (
     AuditSessionResponse,
     AuditSessionCreate as SchemaAuditSessionCreate,
     AuditSessionUpdate as SchemaAuditSessionUpdate,
-    AuditSessionSearchRequest,
 )
 from common.exceptions import ValidationException, AuthorizationException, BusinessLogicException
 
@@ -34,63 +32,6 @@ ALLOWED_FIELDS_UPDATE = {
 }
 
 router = APIRouter(prefix="/audit-sessions", tags=["Audit Sessions"])
-
-@router.get("",
-    summary="List all audit sessions with pagination",
-    description="Fetches paginated audit sessions with access control and filtering.",
-    response_model=List[AuditSessionResponse]
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-async def get_all_audit_sessions(
-    skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
-    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
-    is_active: Optional[bool] = Query(None, description="Filter by active status"),
-    audit_session_service: AuditSessionServiceDep = None,
-    current_user: ValidatedUser = None
-) -> List[AuditSessionResponse]:
-    """List audit sessions with access control."""
-    try:
-        # Create filters
-        filters = AuditSessionFilter(
-            compliance_domain=compliance_domain,
-            is_active=is_active
-        )
-        
-        # Get sessions from service
-        sessions = await audit_session_service.list_sessions(
-            user_id=current_user.id,
-            skip=skip,
-            limit=limit,
-            filters=filters
-        )
-        
-        # Convert to response models
-        return [
-            AuditSessionResponse(
-                id=session.id,
-                user_id=session.user_id,
-                session_name=session.session_name,
-                compliance_domain=session.compliance_domain,
-                is_active=session.is_active,
-                total_queries=session.total_queries,
-                started_at=session.started_at,
-                ended_at=session.ended_at,
-                session_summary=session.session_summary,
-                audit_report=session.audit_report,
-                ip_address=session.ip_address,
-                user_agent=session.user_agent,
-            )
-            for session in sessions
-        ]
-        
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.detail)
-    except AuthorizationException as e:
-        raise HTTPException(status_code=403, detail=e.detail)
-    except BusinessLogicException as e:
-        raise HTTPException(status_code=500, detail=e.detail)
-
 
 @router.get("/user/{user_id}",
     summary="Get audit sessions by user ID",
@@ -152,7 +93,6 @@ async def get_user_audit_sessions(
     except BusinessLogicException as e:
         raise HTTPException(status_code=500, detail=e.detail)
 
-
 @router.get("/{session_id}",
     summary="Get audit session by ID",
     description="Fetches a specific audit session by its ID with access control.",
@@ -193,7 +133,6 @@ async def get_audit_session(
         raise HTTPException(status_code=403, detail=e.detail)
     except BusinessLogicException as e:
         raise HTTPException(status_code=500, detail=e.detail)
-
 
 @router.get("/status/{is_active}",
     summary="Get audit sessions by active status",
@@ -247,7 +186,6 @@ async def get_audit_sessions_by_status(
     except BusinessLogicException as e:
         raise HTTPException(status_code=500, detail=e.detail)
 
-
 @router.get("/domain/{compliance_domain}",
     summary="Get audit sessions by compliance domain",
     description="Fetches audit sessions for a specific compliance domain.",
@@ -299,63 +237,6 @@ async def get_audit_sessions_by_compliance_domain(
         raise HTTPException(status_code=403, detail=e.detail)
     except BusinessLogicException as e:
         raise HTTPException(status_code=500, detail=e.detail)
-
-
-@router.post("/search",
-    summary="Search audit sessions",
-    description="Search audit sessions using various criteria with access control.",
-    response_model=List[AuditSessionResponse]
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-async def search_audit_sessions_endpoint(
-    request: Request,
-    search_request: AuditSessionSearchRequest,
-    audit_session_service: AuditSessionServiceDep = None,
-    current_user: ValidatedUser = None
-) -> List[AuditSessionResponse]:
-    """Search audit sessions."""
-    # NIST SP 800-53 SI-10: Input validation
-    ensure_json_request(request)
-    
-    try:
-        # Search sessions using service
-        sessions = await audit_session_service.search_sessions(
-            user_id=current_user.id,
-            compliance_domain=search_request.compliance_domain,
-            is_active=search_request.is_active,
-            started_after=search_request.started_after,
-            started_before=search_request.started_before,
-            session_name_query=getattr(search_request, 'session_name_contains', None),
-            skip=search_request.skip,
-            limit=search_request.limit
-        )
-        
-        # Convert to response models
-        return [
-            AuditSessionResponse(
-                id=session.id,
-                user_id=session.user_id,
-                session_name=session.session_name,
-                compliance_domain=session.compliance_domain,
-                is_active=session.is_active,
-                total_queries=session.total_queries,
-                started_at=session.started_at,
-                ended_at=session.ended_at,
-                session_summary=session.session_summary,
-                audit_report=session.audit_report,
-                ip_address=session.ip_address,
-                user_agent=session.user_agent,
-            )
-            for session in sessions
-        ]
-        
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.detail)
-    except AuthorizationException as e:
-        raise HTTPException(status_code=403, detail=e.detail)
-    except BusinessLogicException as e:
-        raise HTTPException(status_code=500, detail=e.detail)
-
 
 @router.post("",
     summary="Create new audit session",
@@ -462,152 +343,6 @@ async def create_new_audit_session(
     except BusinessLogicException as e:
         raise HTTPException(status_code=500, detail=e.detail)
 
-
-@router.patch("/{session_id}",
-    summary="Update audit session",
-    description="Updates an existing audit session with new information and access control.",
-    response_model=Dict[str, Any]
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-async def update_existing_audit_session(
-    request: Request,
-    response: Response,
-    session_id: str = Path(..., description="Audit session UUID", regex=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
-    session_update: SchemaAuditSessionUpdate = Body(..., description="Audit session update data"),
-    idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
-    audit_session_service: AuditSessionServiceDep = None,
-    current_user: ValidatedUser = None
-) -> Dict[str, Any]:
-    """Update existing audit session."""
-    # NIST SP 800-53 SI-10: Input validation
-    ensure_json_request(request)
-    ua = normalize_user_agent(request.headers.get("user-agent"))
-    
-    try:
-        # Extract client information for audit trail
-        ip_address = request.client.host if request.client else None
-        
-        # Convert and filter payload to allowed fields only (OWASP API3:2023)
-        if hasattr(session_update, "model_dump"):
-            payload = session_update.model_dump(exclude_unset=True)
-        elif hasattr(session_update, "dict"):
-            payload = session_update.dict(exclude_unset=True)
-        else:
-            payload = dict(session_update)
-        
-        # Filter payload to only allowed update fields
-        filtered_payload = {k: v for k, v in payload.items() if k in ALLOWED_FIELDS_UPDATE}
-        
-        if not filtered_payload:
-            raise HTTPException(
-                status_code=400,
-                detail="No valid update fields provided"
-            )
-        
-        # Idempotency protection for update operations
-        fingerprint = compute_fingerprint({"session_id": session_id, **filtered_payload})
-        repo = request.app.state.idempotency_repo
-        cached = require_idempotency(repo, idempotency_key, fingerprint)
-        
-        if cached:
-            return cached["body"]
-        
-        # Convert to entity with filtered data
-        update_data = AuditSessionUpdate(
-            session_name=filtered_payload.get("session_name"),
-            session_summary=filtered_payload.get("session_summary"),
-            audit_report=filtered_payload.get("audit_report"),
-            is_active=filtered_payload.get("is_active"),
-            ended_at=filtered_payload.get("ended_at")
-        )
-        
-        # Update session using service
-        updated_session = await audit_session_service.update_session(
-            session_id=session_id,
-            update_data=update_data,
-            user_id=current_user.id,
-            ip_address=ip_address,
-            user_agent=ua
-        )
-        
-        # Prepare structured response
-        session_response = AuditSessionResponse(
-            id=updated_session.id,
-            user_id=updated_session.user_id,
-            session_name=updated_session.session_name,
-            compliance_domain=updated_session.compliance_domain,
-            is_active=updated_session.is_active,
-            total_queries=updated_session.total_queries,
-            started_at=updated_session.started_at,
-            ended_at=updated_session.ended_at,
-            session_summary=updated_session.session_summary,
-            audit_report=updated_session.audit_report,
-            ip_address=updated_session.ip_address,
-            user_agent=updated_session.user_agent,
-            created_at=updated_session.created_at,
-            updated_at=updated_session.updated_at
-        )
-        
-        body = {"data": session_response.model_dump(), "meta": {"message": "Audit session updated"}}
-        
-        # Store idempotency result
-        store_idempotency(
-            repo, idempotency_key, fingerprint,
-            {"body": body}, IDEMPOTENCY_TTL_SECONDS
-        )
-        
-        return body
-        
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.detail)
-    except AuthorizationException as e:
-        raise HTTPException(status_code=403, detail=e.detail)
-    except BusinessLogicException as e:
-        raise HTTPException(status_code=500, detail=e.detail)
-
-
-@router.delete("/{session_id}",
-    summary="Delete audit session",
-    description="Soft delete an audit session (deactivate) or hard delete (admin only).",
-    response_model=Dict[str, Any]
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-async def delete_audit_session(
-    request: Request,
-    session_id: str,
-    hard_delete: bool = Query(False, description="Permanently delete (admin only)"),
-    audit_session_service: AuditSessionServiceDep = None,
-    current_user: ValidatedUser = None
-) -> Dict[str, Any]:
-    """Delete audit session."""
-    try:
-        # Extract client information for audit trail
-        ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
-        
-        # Delete session using service
-        success = await audit_session_service.delete_session(
-            session_id=session_id,
-            user_id=current_user.id,
-            soft_delete=not hard_delete,
-            ip_address=ip_address,
-            user_agent=user_agent
-        )
-        
-        return {
-            "success": success,
-            "message": f"Audit session {'permanently deleted' if hard_delete else 'deactivated'} successfully",
-            "session_id": session_id
-        }
-        
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.detail)
-    except AuthorizationException as e:
-        raise HTTPException(status_code=403, detail=e.detail)
-    except BusinessLogicException as e:
-        raise HTTPException(status_code=500, detail=e.detail)
-
-
 @router.put("/{session_id}/activate",
     summary="Activate audit session",
     description="Activate a closed audit session.",
@@ -681,7 +416,6 @@ async def activate_audit_session(
         raise HTTPException(status_code=403, detail=e.detail)
     except BusinessLogicException as e:
         raise HTTPException(status_code=500, detail=e.detail)
-
 
 @router.put("/{session_id}/close",
     summary="Close audit session",
@@ -763,37 +497,6 @@ async def close_audit_session(
         )
         
         return body
-        
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.detail)
-    except AuthorizationException as e:
-        raise HTTPException(status_code=403, detail=e.detail)
-    except BusinessLogicException as e:
-        raise HTTPException(status_code=500, detail=e.detail)
-
-
-@router.get("/statistics",
-    summary="Get audit session statistics",
-    description="Get aggregated statistics about audit sessions with access control.",
-    response_model=Dict[str, Any]
-)
-@authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-async def get_audit_session_statistics_endpoint(
-    compliance_domain: Optional[str] = Query(None, description="Filter by compliance domain"),
-    target_user_id: Optional[str] = Query(None, description="Filter by user ID (admin only)"),
-    audit_session_service: AuditSessionServiceDep = None,
-    current_user: ValidatedUser = None
-) -> Dict[str, Any]:
-    """Get audit session statistics."""
-    try:
-        # Get statistics using service
-        statistics = await audit_session_service.get_session_statistics(
-            user_id=current_user.id,
-            compliance_domain=compliance_domain,
-            target_user_id=target_user_id
-        )
-        
-        return statistics.model_dump()
         
     except ValidationException as e:
         raise HTTPException(status_code=400, detail=e.detail)

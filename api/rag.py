@@ -12,12 +12,12 @@ from auth.decorators import ValidatedUser, authorize
 from security.input_validator import safe_stream, validate_and_secure_query_request
 from security.endpoint_validator import ensure_json_request, normalize_user_agent, compute_fingerprint, require_idempotency, stable_fingerprint, store_idempotency
 from services.authentication import authenticate_and_authorize
-from services.audit_sessions import get_audit_session_by_id, update_audit_session
 from dependencies import ChatHistoryServiceDep
+from dependencies import AuditSessionServiceDep
 from entities.chat_history import ChatHistoryFilter
 from services.schemas import QueryRequest, QueryResponse
 from dependencies import RAGServiceDep
-from common.exceptions import ValidationException, AuthorizationException, BusinessLogicException
+from common.exceptions import ValidationException, AuthorizationException, BusinessLogicException, ResourceNotFoundException
 
 router = APIRouter(tags=["RAG"])
 limiter = Limiter(key_func=get_remote_address)
@@ -47,6 +47,7 @@ async def query_qa(
     request: Request,
     response: Response,
     rag_service: RAGServiceDep,
+    audit_session_service: AuditSessionServiceDep,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False)
 ) -> QueryResponse:
     """
@@ -114,18 +115,17 @@ async def query_qa(
         audit_session_data = None
         if audit_session_id:
             try:
-                audit_session_data = get_audit_session_by_id(audit_session_id)
-                if not audit_session_data.get("is_active", False):
+                audit_session_entity = await audit_session_service.get_session_by_id(audit_session_id, current_user.id)
+                audit_session_data = audit_session_entity
+                if not audit_session_entity.is_active:
                     raise HTTPException(status_code=400, detail="Audit session is not active")
-            except HTTPException as e:
-                if e.status_code == 404:
-                    raise HTTPException(status_code=400, detail="Invalid audit session ID")
-                raise
+            except ResourceNotFoundException:
+                raise HTTPException(status_code=400, detail="Invalid audit session ID")
 
         # Set compliance domain from audit session or request
         compliance_domain = None
         if audit_session_data:
-            compliance_domain = audit_session_data.get("compliance_domain")
+            compliance_domain = audit_session_data.compliance_domain
         elif filtered_payload.get('compliance_domain'):
             compliance_domain = filtered_payload['compliance_domain']
 
@@ -172,10 +172,9 @@ async def query_qa(
         # Update audit session query count
         if audit_session_id and audit_session_data:
             try:
-                current_count = audit_session_data.get("total_queries", 0)
-                update_audit_session(
+                await audit_session_service.increment_session_queries(
                     session_id=audit_session_id,
-                    total_queries=current_count + 1
+                    user_id=current_user.id
                 )
             except Exception as e:
                 logging.warning(f"Failed to update audit session query count: {e}")
@@ -240,6 +239,7 @@ async def query_stream(
     response: Response,
     rag_service: RAGServiceDep,
     history_service: ChatHistoryServiceDep,
+    audit_session_service: AuditSessionServiceDep,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False)
 ):
     """
@@ -296,17 +296,16 @@ async def query_stream(
         audit_session_data = None
         if audit_session_id:
             try:
-                audit_session_data = get_audit_session_by_id(audit_session_id)
-                if not audit_session_data.get("is_active", False):
+                audit_session_entity = await audit_session_service.get_session_by_id(audit_session_id, current_user.id)
+                audit_session_data = audit_session_entity
+                if not audit_session_entity.is_active:
                     raise HTTPException(status_code=400, detail="Audit session is not active")
-            except HTTPException as e:
-                if e.status_code == 404:
-                    raise HTTPException(status_code=400, detail="Invalid audit session ID")
-                raise
+            except ResourceNotFoundException:
+                raise HTTPException(status_code=400, detail="Invalid audit session ID")
 
         compliance_domain = None
         if audit_session_data:
-            compliance_domain = audit_session_data.get("compliance_domain")
+            compliance_domain = audit_session_data.compliance_domain
         elif filtered_payload.get('compliance_domain'):
             compliance_domain = filtered_payload['compliance_domain']
 
@@ -367,10 +366,14 @@ async def query_stream(
                 # Update audit session query count after streaming completes
                 if audit_session_id and audit_session_data:
                     try:
-                        current_count = audit_session_data.get("total_queries", 0)
-                        update_audit_session(
-                            session_id=audit_session_id,
-                            total_queries=current_count + 1
+                        # Increment query count via service
+                        # Note: this call is not awaited inside generator context to avoid blocking stream
+                        import asyncio
+                        asyncio.create_task(
+                            audit_session_service.increment_session_queries(
+                                session_id=audit_session_id,
+                                user_id=current_user.id
+                            )
                         )
                     except Exception as e:
                         logging.warning(f"Failed to update audit session query count: {e}")
