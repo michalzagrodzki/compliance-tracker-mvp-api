@@ -10,9 +10,10 @@ from slowapi.util import get_remote_address
 from auth.decorators import ValidatedUser, authorize
 from security.endpoint_validator import compute_fingerprint, require_idempotency, store_idempotency, normalize_user_agent, ensure_json_request
 from security.input_validator import InputValidator, SecurityError
-from services.audit_log import create_audit_log
 from dependencies import AuditReportServiceDep
 from dependencies import AuditSessionServiceDep
+from dependencies import AuditLogServiceDep
+from entities.audit_log import AuditLogCreate
 from common.exceptions import ValidationException, AuthorizationException, BusinessLogicException
 from common.logging import get_logger
 from services.audit_report_versions import (
@@ -58,6 +59,7 @@ limiter = Limiter(key_func=get_remote_address)
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
 async def get_all_audit_reports(
     audit_report_service: AuditReportServiceDep = None,
+    audit_log_service: AuditLogServiceDep = None,
     current_user: ValidatedUser = None
 ) -> List[Dict[str, Any]]:
     user_compliance_domains = getattr(current_user, 'compliance_domains', [])
@@ -67,18 +69,24 @@ async def get_all_audit_reports(
             status_code=403, 
             detail="Access denied."
         )
-    create_audit_log(
-        object_type="audit_report",
-        user_id=current_user.id,
-        object_id=current_user.id,
-        action="view",
-        compliance_domain=current_user.compliance_domains[0],
-        audit_session_id=None,
-        risk_level="high",
-        details={},
-        ip_address=None,
-        user_agent=None
-    )
+    # Best-effort audit log via service (ignore failures for non-admin users)
+    try:
+        audit_log = AuditLogCreate(
+            object_type="audit_report",
+            object_id=str(current_user.id),
+            action="view",
+            user_id=str(current_user.id),
+            compliance_domain=current_user.compliance_domains[0],
+            audit_session_id=None,
+            risk_level="high",
+            details={},
+            ip_address=None,
+            user_agent=None,
+            tags=[],
+        )
+        await audit_log_service.create_audit_log(audit_log, str(current_user.id))
+    except Exception:
+        logger.debug("Audit log creation skipped/failed for get_all_audit_reports", exc_info=True)
 
     return await audit_report_service.list_reports_by_domains(current_user.id, user_compliance_domains)
 
@@ -362,6 +370,7 @@ async def create_recommendations(
     request: Request,
     audit_session_id: str = Path(..., description="Audit session UUID"),
     audit_report_service: AuditReportServiceDep = None,
+    audit_log_service: AuditLogServiceDep = None,
     current_user: ValidatedUser = None
 ) -> GeneratedRecommendationResponse:
     """Create recommendations for an audit session."""
@@ -377,23 +386,28 @@ async def create_recommendations(
         # Generate recommendations using the service
         result = await audit_report_service.generate_recommendations(audit_session_id)
         
-        # Create audit log
-        create_audit_log(
-            object_type="audit_report",
-            user_id=current_user.id,
-            object_id=audit_session_id,
-            action="generate",
-            compliance_domain=None,  # Will be populated by the service if available
-            audit_session_id=audit_session_id,
-            risk_level="medium",
-            details={
-                "method": "api_endpoint",
-                "recommendations_length": len(result['recommendations']),
-                "gaps_analyzed": result.get('gaps_analyzed', 0)
-            },
-            ip_address=None,
-            user_agent=None
-        )
+        # Create audit log (best-effort)
+        try:
+            audit_log = AuditLogCreate(
+                object_type="audit_report",
+                object_id=str(audit_session_id),
+                action="generate",
+                user_id=str(current_user.id),
+                compliance_domain=None,
+                audit_session_id=str(audit_session_id),
+                risk_level="medium",
+                details={
+                    "method": "api_endpoint",
+                    "recommendations_length": len(result['recommendations']),
+                    "gaps_analyzed": result.get('gaps_analyzed', 0),
+                },
+                ip_address=None,
+                user_agent=None,
+                tags=[],
+            )
+            await audit_log_service.create_audit_log(audit_log, str(current_user.id))
+        except Exception:
+            logger.debug("Audit log creation skipped/failed for create_recommendations", exc_info=True)
         
         return GeneratedRecommendationResponse(
             message="Recommendations generated successfully",
@@ -430,6 +444,7 @@ async def create_action_items(
     request: Request,
     audit_session_id: str = Path(..., description="Audit session UUID"),
     audit_report_service: AuditReportServiceDep = None,
+    audit_log_service: AuditLogServiceDep = None,
     current_user: ValidatedUser = None
 ) -> GeneratedActionItemResponse:
     """Create action items for an audit session."""
@@ -445,23 +460,28 @@ async def create_action_items(
         # Generate action items using the service
         result = await audit_report_service.generate_action_items(audit_session_id)
         
-        # Create audit log
-        create_audit_log(
-            object_type="audit_report",
-            user_id=current_user.id,
-            object_id=audit_session_id,
-            action="generate",
-            compliance_domain=None,  # Will be populated by the service if available
-            audit_session_id=audit_session_id,
-            risk_level="medium",
-            details={
-                "method": "api_endpoint",
-                "action_items_length": len(result['action_items']),
-                "gaps_analyzed": result.get('gaps_analyzed', 0)
-            },
-            ip_address=None,
-            user_agent=None
-        )
+        # Create audit log (best-effort)
+        try:
+            audit_log = AuditLogCreate(
+                object_type="audit_report",
+                object_id=str(audit_session_id),
+                action="generate",
+                user_id=str(current_user.id),
+                compliance_domain=None,
+                audit_session_id=str(audit_session_id),
+                risk_level="medium",
+                details={
+                    "method": "api_endpoint",
+                    "action_items_length": len(result['action_items']),
+                    "gaps_analyzed": result.get('gaps_analyzed', 0),
+                },
+                ip_address=None,
+                user_agent=None,
+                tags=[],
+            )
+            await audit_log_service.create_audit_log(audit_log, str(current_user.id))
+        except Exception:
+            logger.debug("Audit log creation skipped/failed for create_action_items", exc_info=True)
         
         return GeneratedActionItemResponse(
             message="Action items generated successfully",

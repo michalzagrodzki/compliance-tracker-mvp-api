@@ -4,7 +4,8 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from auth.decorators import ValidatedUser, authorize
-from services.audit_log import create_audit_log
+from dependencies import AuditLogServiceDep
+from entities.audit_log import AuditLogCreate
 from services.target_audience_summary import generate_target_audience_summary, get_audience_context
 from services.schemas import ExecutiveSummaryRequest, TargetAudienceSummaryResponse
 from config.config import settings
@@ -20,9 +21,10 @@ limiter = Limiter(key_func=get_remote_address)
 )
 @limiter.limit("10/minute")
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def create_target_audience_summary(
+async def create_target_audience_summary(
     request_data: ExecutiveSummaryRequest,
     request: Request,
+    audit_log_service: AuditLogServiceDep = None,
     current_user: ValidatedUser = None
 ) -> TargetAudienceSummaryResponse:
     start_time = time.time()
@@ -108,19 +110,27 @@ def create_target_audience_summary(
         )
     }
 
-    # Create audit log
-    create_audit_log(
-        object_type="audit_session",
-        user_id=current_user.id,
-        object_id=request_data.audit_report.audit_session_id,
-        action="create",
-        compliance_domain=request_data.audit_report.compliance_domain,
-        audit_session_id=request_data.audit_report.audit_session_id,
-        risk_level="high",
-        details={"audit report title": request_data.audit_report.report_title, "summary type": "target audience summary"},
-        ip_address=ip_address,
-        user_agent=user_agent
-    )
+    # Create audit log (best-effort via service)
+    try:
+        audit_log = AuditLogCreate(
+            object_type="audit_session",
+            object_id=str(request_data.audit_report.audit_session_id),
+            action="create",
+            user_id=str(current_user.id),
+            compliance_domain=request_data.audit_report.compliance_domain,
+            audit_session_id=str(request_data.audit_report.audit_session_id),
+            risk_level="high",
+            details={
+                "audit report title": request_data.audit_report.report_title,
+                "summary type": "target audience summary",
+            },
+            ip_address=ip_address,
+            user_agent=user_agent,
+            tags=[],
+        )
+        await audit_log_service.create_audit_log(audit_log, str(current_user.id))
+    except Exception:
+        pass
     
     return TargetAudienceSummaryResponse(
         target_audience_summary=target_audience_summary,

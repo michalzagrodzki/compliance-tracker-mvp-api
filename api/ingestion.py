@@ -7,9 +7,10 @@ from auth.decorators import ValidatedUser, authorize
 from security.endpoint_validator import compute_fingerprint, require_idempotency, store_idempotency, normalize_user_agent, ensure_json_request
 from security.upload_validation import validate_document_upload, upload_validator
 from config.config import settings
-from services.audit_log import create_audit_log
 from dependencies import IngestionServiceDep
 from dependencies import AuditSessionServiceDep
+from dependencies import AuditLogServiceDep
+from entities.audit_log import AuditLogCreate
 from services.schemas import (
     UploadResponse,
     PdfIngestionSearchRequest,
@@ -50,6 +51,7 @@ async def upload_pdf(
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     current_user: ValidatedUser = None,
     ingestion_service: IngestionServiceDep = None,
+    audit_log_service: AuditLogServiceDep = None,
 ):
     """
     Hardened PDF upload endpoint with comprehensive security controls.
@@ -168,28 +170,33 @@ async def upload_pdf(
             document_title=document_title,
         )
         
-        # Create comprehensive audit log entry using ingestion_id
-        create_audit_log(
-            object_type="document",
-            user_id=current_user.id,
-            object_id=ingestion_id,
-            action="create",
-            compliance_domain=compliance_domain or "unspecified",
-            audit_session_id=None,
-            risk_level="medium",  # Document uploads are medium risk
-            details={
-                "filename": validation_result["original_filename"],
-                "sanitized_filename": safe_filename,
-                "file_size": validation_result["file_size"],
-                "mime_type": validation_result["mime_type"],
-                "sha256_hash": validation_result["sha256_hash"],
-                "scan_results": validation_result["scan_results"],
-                "metadata": filtered_metadata,
-                "validation_timestamp": validation_result["validation_timestamp"]
-            },
-            ip_address=client_ip,
-            user_agent=ua
-        )
+        # Create comprehensive audit log entry using ingestion_id (best-effort)
+        try:
+            audit_log = AuditLogCreate(
+                object_type="document",
+                object_id=str(ingestion_id),
+                action="create",
+                user_id=str(current_user.id),
+                compliance_domain=compliance_domain or "unspecified",
+                audit_session_id=None,
+                risk_level="medium",
+                details={
+                    "filename": validation_result["original_filename"],
+                    "sanitized_filename": safe_filename,
+                    "file_size": validation_result["file_size"],
+                    "mime_type": validation_result["mime_type"],
+                    "sha256_hash": validation_result["sha256_hash"],
+                    "scan_results": validation_result["scan_results"],
+                    "metadata": filtered_metadata,
+                    "validation_timestamp": validation_result["validation_timestamp"],
+                },
+                ip_address=client_ip,
+                user_agent=ua,
+                tags=[],
+            )
+            await audit_log_service.create_audit_log(audit_log, str(current_user.id))
+        except Exception:
+            logging.debug("Audit log creation skipped/failed for upload_pdf", exc_info=True)
         
         # Prepare response
         upload_response = UploadResponse(
@@ -224,23 +231,28 @@ async def upload_pdf(
     except Exception as e:
         logging.error(f"Unexpected error during upload: {e}", exc_info=True)
         
-        # Create audit log for failed upload
-        create_audit_log(
-            object_type="document",
-            user_id=current_user.id,
-            object_id="upload_failed",
-            action="upload_error",
-            compliance_domain=compliance_domain or "unspecified",
-            audit_session_id=None,
-            risk_level="high",  # Failed uploads are high risk events
-            details={
-                "error": str(e),
-                "filename": file.filename,
-                "client_ip": client_ip
-            },
-            ip_address=client_ip,
-            user_agent=ua
-        )
+        # Create audit log for failed upload (best-effort)
+        try:
+            audit_log = AuditLogCreate(
+                object_type="document",
+                object_id="upload_failed",
+                action="upload_error",
+                user_id=str(current_user.id),
+                compliance_domain=compliance_domain or "unspecified",
+                audit_session_id=None,
+                risk_level="high",
+                details={
+                    "error": str(e),
+                    "filename": file.filename,
+                    "client_ip": client_ip,
+                },
+                ip_address=client_ip,
+                user_agent=ua,
+                tags=[],
+            )
+            await audit_log_service.create_audit_log(audit_log, str(current_user.id))
+        except Exception:
+            logging.debug("Audit log creation skipped/failed for upload_pdf error", exc_info=True)
         
         raise HTTPException(
             status_code=500,
@@ -275,6 +287,7 @@ async def get_pdf_ingestions_by_domains(
     limit: int = Query(10, ge=1, le=100, description="Maximum number of records to return"),
     current_user: ValidatedUser = None,
     ingestion_service: IngestionServiceDep = None,
+    audit_log_service: AuditLogServiceDep = None,
 ) -> List[Dict[str, Any]]:
     user_compliance_domains = getattr(current_user, 'compliance_domains', [])
     
@@ -284,18 +297,24 @@ async def get_pdf_ingestions_by_domains(
             detail="Access denied."
         )
 
-    create_audit_log(
-        object_type="document",
-        user_id=current_user.id,
-        object_id=current_user.id,
-        action="view",
-        compliance_domain=current_user.compliance_domains[0],
-        audit_session_id=None,
-        risk_level="high",
-        details={},
-        ip_address=None,
-        user_agent=None
-    )
+    # Best-effort audit log via service
+    try:
+        audit_log = AuditLogCreate(
+            object_type="document",
+            object_id=str(current_user.id),
+            action="view",
+            user_id=str(current_user.id),
+            compliance_domain=current_user.compliance_domains[0],
+            audit_session_id=None,
+            risk_level="high",
+            details={},
+            ip_address=None,
+            user_agent=None,
+            tags=[],
+        )
+        await audit_log_service.create_audit_log(audit_log, str(current_user.id))
+    except Exception:
+        logging.debug("Audit log creation skipped/failed for get_pdf_ingestions_by_domains", exc_info=True)
 
     return await ingestion_service.list_pdf_ingestions_by_compliance_domains(
         compliance_domains=user_compliance_domains, skip=skip, limit=limit

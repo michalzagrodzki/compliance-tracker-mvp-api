@@ -4,7 +4,8 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from auth.decorators import ValidatedUser, authorize
-from services.audit_log import create_audit_log
+from dependencies import AuditLogServiceDep
+from entities.audit_log import AuditLogCreate
 from services.threat_intelligence import generate_threat_intelligence
 from services.schemas import ThreatIntelligenceRequest, ThreatIntelligenceResponse
 from config.config import settings
@@ -20,9 +21,10 @@ limiter = Limiter(key_func=get_remote_address)
 )
 @limiter.limit("10/minute")
 @authorize(allowed_roles=["admin", "compliance_officer"], check_active=True)
-def create_threat_intelligence_analysis(
+async def create_threat_intelligence_analysis(
     request_data: ThreatIntelligenceRequest,
     request: Request,
+    audit_log_service: AuditLogServiceDep = None,
     current_user: ValidatedUser = None
 ) -> ThreatIntelligenceResponse:
     start_time = time.time()
@@ -93,19 +95,27 @@ def create_threat_intelligence_analysis(
         )
     }
 
-    # Create audit log
-    create_audit_log(
-        object_type="audit_session",
-        user_id=current_user.id,
-        object_id=request_data.audit_report.audit_session_id,
-        action="create",
-        compliance_domain=request_data.audit_report.compliance_domain,
-        audit_session_id=request_data.audit_report.audit_session_id,
-        risk_level="high",
-        details={"audit report title": request_data.audit_report.report_title, "summary type": "threat intelligence analysis"},
-        ip_address=ip_address,
-        user_agent=user_agent
-    )
+    # Create audit log (best-effort via service)
+    try:
+        audit_log = AuditLogCreate(
+            object_type="audit_session",
+            object_id=str(request_data.audit_report.audit_session_id),
+            action="create",
+            user_id=str(current_user.id),
+            compliance_domain=request_data.audit_report.compliance_domain,
+            audit_session_id=str(request_data.audit_report.audit_session_id),
+            risk_level="high",
+            details={
+                "audit report title": request_data.audit_report.report_title,
+                "summary type": "threat intelligence analysis",
+            },
+            ip_address=ip_address,
+            user_agent=user_agent,
+            tags=[],
+        )
+        await audit_log_service.create_audit_log(audit_log, str(current_user.id))
+    except Exception:
+        pass
     
     return ThreatIntelligenceResponse(
         threat_analysis=threat_analysis,
