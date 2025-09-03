@@ -178,3 +178,91 @@ class PdfIngestionRepository(SupabaseRepository[PdfIngestion]):
                 context={"id": ingestion_id}
             )
 
+    async def list_by_compliance_domains(
+        self,
+        compliance_domains: List[str],
+        skip: int = 0,
+        limit: int = 10,
+        order_by: Optional[str] = "-ingested_at",
+    ) -> List[PdfIngestion]:
+        try:
+            q = (
+                self.supabase
+                .table(self.table_name)
+                .select("*")
+                .in_("compliance_domain", compliance_domains)
+            )
+            q = self._apply_ordering(q, order_by).range(skip, skip + limit - 1)
+            res = q.execute()
+            return [PdfIngestion.from_dict(r) for r in (res.data or [])]
+        except Exception as e:
+            logger.error(f"List by compliance domains failed: {e}", exc_info=True)
+            raise BusinessLogicException(
+                detail="Failed to list ingestions by compliance domains",
+                error_code="PDF_INGESTION_LIST_BY_DOMAINS_FAILED",
+            )
+
+    async def list_by_compliance_domain(
+        self,
+        compliance_domain: str,
+        skip: int = 0,
+        limit: int = 10,
+        order_by: Optional[str] = "-ingested_at",
+    ) -> List[PdfIngestion]:
+        try:
+            q = self.supabase.table(self.table_name).select("*").eq("compliance_domain", compliance_domain)
+            q = self._apply_ordering(q, order_by).range(skip, skip + limit - 1)
+            res = q.execute()
+            return [PdfIngestion.from_dict(r) for r in (res.data or [])]
+        except Exception as e:
+            logger.error(f"List by compliance domain failed: {e}", exc_info=True)
+            raise BusinessLogicException(
+                detail="Failed to list ingestions by compliance domain",
+                error_code="PDF_INGESTION_LIST_BY_DOMAIN_FAILED",
+                context={"compliance_domain": compliance_domain},
+            )
+
+    async def list_by_user(
+        self,
+        user_id: str,
+        skip: int = 0,
+        limit: int = 10,
+        order_by: Optional[str] = "-ingested_at",
+    ) -> List[PdfIngestion]:
+        try:
+            q = self.supabase.table(self.table_name).select("*").eq("uploaded_by", user_id)
+            q = self._apply_ordering(q, order_by).range(skip, skip + limit - 1)
+            res = q.execute()
+            return [PdfIngestion.from_dict(r) for r in (res.data or [])]
+        except Exception as e:
+            logger.error(f"List by user failed: {e}", exc_info=True)
+            raise BusinessLogicException(
+                detail="Failed to list ingestions by user",
+                error_code="PDF_INGESTION_LIST_BY_USER_FAILED",
+                context={"user_id": user_id},
+            )
+
+    async def list_by_version(
+        self,
+        document_version: str,
+        skip: int = 0,
+        limit: int = 10,
+        exact_match: bool = False,
+        order_by: Optional[str] = "-ingested_at",
+    ) -> List[PdfIngestion]:
+        try:
+            q = self.supabase.table(self.table_name).select("*")
+            if exact_match:
+                q = q.eq("document_version", document_version)
+            else:
+                q = q.ilike("document_version", f"%{document_version}%")
+            q = self._apply_ordering(q, order_by).range(skip, skip + limit - 1)
+            res = q.execute()
+            return [PdfIngestion.from_dict(r) for r in (res.data or [])]
+        except Exception as e:
+            logger.error(f"List by version failed: {e}", exc_info=True)
+            raise BusinessLogicException(
+                detail="Failed to list ingestions by version",
+                error_code="PDF_INGESTION_LIST_BY_VERSION_FAILED",
+                context={"document_version": document_version, "exact_match": exact_match},
+            )

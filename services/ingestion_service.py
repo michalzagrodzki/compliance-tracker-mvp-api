@@ -216,18 +216,10 @@ class IngestionService:
     async def list_pdf_ingestions_by_compliance_domains(
         self, compliance_domains: List[str], skip: int = 0, limit: int = 10
     ) -> List[Dict[str, Any]]:
-        # Use Supabase IN filter for efficiency
-        res = (
-            self.ingestion_repo.supabase
-            .table(self.ingestion_repo.table_name)
-            .select("*")
-            .in_("compliance_domain", compliance_domains)
-            .order("ingested_at", desc=True)
-            .limit(limit)
-            .offset(skip)
-            .execute()
+        items = await self.ingestion_repo.list_by_compliance_domains(
+            compliance_domains=compliance_domains, skip=skip, limit=limit
         )
-        return res.data or []
+        return [i.to_dict() for i in items]
 
     async def get_pdf_ingestion_by_id(self, ingestion_id: str) -> Dict[str, Any]:
         item = await self.get_by_id(ingestion_id)
@@ -236,32 +228,16 @@ class IngestionService:
     async def get_pdf_ingestions_by_compliance_domain(
         self, compliance_domain: str, skip: int = 0, limit: int = 10
     ) -> List[Dict[str, Any]]:
-        res = (
-            self.ingestion_repo.supabase
-            .table(self.ingestion_repo.table_name)
-            .select("*")
-            .eq("compliance_domain", compliance_domain)
-            .order("ingested_at", desc=True)
-            .limit(limit)
-            .offset(skip)
-            .execute()
+        items = await self.ingestion_repo.list_by_compliance_domain(
+            compliance_domain=compliance_domain, skip=skip, limit=limit
         )
-        return res.data or []
+        return [i.to_dict() for i in items]
 
     async def get_pdf_ingestions_by_user(
         self, user_id: str, skip: int = 0, limit: int = 10
     ) -> List[Dict[str, Any]]:
-        res = (
-            self.ingestion_repo.supabase
-            .table(self.ingestion_repo.table_name)
-            .select("*")
-            .eq("uploaded_by", user_id)
-            .order("ingested_at", desc=True)
-            .limit(limit)
-            .offset(skip)
-            .execute()
-        )
-        return res.data or []
+        items = await self.ingestion_repo.list_by_user(user_id=user_id, skip=skip, limit=limit)
+        return [i.to_dict() for i in items]
 
     async def get_pdf_ingestions_by_version(
         self,
@@ -270,17 +246,13 @@ class IngestionService:
         limit: int = 10,
         exact_match: bool = False,
     ) -> List[Dict[str, Any]]:
-        q = (
-            self.ingestion_repo.supabase
-            .table(self.ingestion_repo.table_name)
-            .select("*")
+        items = await self.ingestion_repo.list_by_version(
+            document_version=document_version,
+            skip=skip,
+            limit=limit,
+            exact_match=exact_match,
         )
-        if exact_match:
-            q = q.eq("document_version", document_version)
-        else:
-            q = q.ilike("document_version", f"%{document_version}%")
-        res = q.order("ingested_at", desc=True).limit(limit).offset(skip).execute()
-        return res.data or []
+        return [i.to_dict() for i in items]
 
     async def search_pdf_ingestions(
         self,
