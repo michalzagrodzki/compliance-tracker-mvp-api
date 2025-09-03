@@ -139,28 +139,6 @@ class ComplianceGapRepository(SupabaseRepository[ComplianceGap]):
                 context={"gap_id": gap_id}
             )
 
-    async def delete(self, gap_id: str) -> bool:
-        """Delete a compliance gap by ID (hard delete in this case)."""
-        try:
-            result = self.supabase.table(self.table_name)\
-                .delete()\
-                .eq("id", gap_id)\
-                .execute()
-            
-            if result.data:
-                logger.info(f"Deleted compliance gap: {gap_id}")
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"Failed to delete compliance gap {gap_id}: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to delete compliance gap",
-                error_code="COMPLIANCE_GAP_DELETION_FAILED",
-                context={"gap_id": gap_id}
-            )
-
     async def list(
         self,
         skip: int = 0,
@@ -229,52 +207,6 @@ class ComplianceGapRepository(SupabaseRepository[ComplianceGap]):
                 detail="Failed to retrieve compliance gaps by audit session",
                 error_code="COMPLIANCE_GAP_AUDIT_SESSION_RETRIEVAL_FAILED",
                 context={"audit_session_id": audit_session_id}
-            )
-
-    async def get_by_compliance_domain(self, domain: str, skip: int = 0, limit: int = 100) -> List[ComplianceGap]:
-        """Get all compliance gaps for a specific compliance domain."""
-        try:
-            result = self.supabase.table(self.table_name)\
-                .select("*")\
-                .eq("compliance_domain", domain)\
-                .order("detected_at", desc=True)\
-                .range(skip, skip + limit - 1)\
-                .execute()
-            
-            gaps = [ComplianceGap.from_dict(gap_data) for gap_data in result.data]
-            
-            logger.debug(f"Found {len(gaps)} compliance gaps for domain: {domain}")
-            return gaps
-            
-        except Exception as e:
-            logger.error(f"Failed to get compliance gaps by domain {domain}: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to retrieve compliance gaps by domain",
-                error_code="COMPLIANCE_GAP_DOMAIN_RETRIEVAL_FAILED",
-                context={"domain": domain}
-            )
-
-    async def get_by_user(self, user_id: str, skip: int = 0, limit: int = 100) -> List[ComplianceGap]:
-        """Get all compliance gaps created by or assigned to a user."""
-        try:
-            result = self.supabase.table(self.table_name)\
-                .select("*")\
-                .or_(f"user_id.eq.{user_id},assigned_to.eq.{user_id}")\
-                .order("detected_at", desc=True)\
-                .range(skip, skip + limit - 1)\
-                .execute()
-            
-            gaps = [ComplianceGap.from_dict(gap_data) for gap_data in result.data]
-            
-            logger.debug(f"Found {len(gaps)} compliance gaps for user: {user_id}")
-            return gaps
-            
-        except Exception as e:
-            logger.error(f"Failed to get compliance gaps by user {user_id}: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to retrieve compliance gaps by user",
-                error_code="COMPLIANCE_GAP_USER_RETRIEVAL_FAILED",
-                context={"user_id": user_id}
             )
 
     async def get_by_domains(self, domains: List[str], skip: int = 0, limit: int = 100) -> List[ComplianceGap]:
@@ -347,43 +279,6 @@ class ComplianceGapRepository(SupabaseRepository[ComplianceGap]):
                 context={"gap_id": gap_id, "status": status.value}
             )
 
-    async def assign_to_user(self, gap_id: str, assigned_user_id: str, assigner_user_id: str, 
-                            due_date: Optional[datetime] = None) -> Optional[ComplianceGap]:
-        """Assign a compliance gap to a user."""
-        try:
-            update_data = {
-                "assigned_to": assigned_user_id,
-                "updated_at": datetime.utcnow().isoformat()
-            }
-            
-            if due_date:
-                update_data["due_date"] = due_date.isoformat()
-            
-            result = self.supabase.table(self.table_name)\
-                .update(update_data)\
-                .eq("id", gap_id)\
-                .execute()
-            
-            if not result.data:
-                raise ResourceNotFoundException(
-                    resource_type="ComplianceGap",
-                    resource_id=gap_id
-                )
-            
-            updated_gap = ComplianceGap.from_dict(result.data[0])
-            logger.info(f"Assigned compliance gap {gap_id} to user {assigned_user_id}")
-            return updated_gap
-            
-        except ResourceNotFoundException:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to assign compliance gap {gap_id}: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to assign compliance gap",
-                error_code="COMPLIANCE_GAP_ASSIGNMENT_FAILED",
-                context={"gap_id": gap_id, "assigned_user_id": assigned_user_id}
-            )
-
     async def mark_reviewed(self, gap_id: str, reviewer_user_id: str) -> Optional[ComplianceGap]:
         """Mark a compliance gap as reviewed."""
         try:
@@ -415,104 +310,4 @@ class ComplianceGapRepository(SupabaseRepository[ComplianceGap]):
                 detail="Failed to mark compliance gap as reviewed",
                 error_code="COMPLIANCE_GAP_REVIEW_FAILED",
                 context={"gap_id": gap_id}
-            )
-
-    async def get_statistics(self, compliance_domain: Optional[str] = None) -> Dict[str, Any]:
-        """Get statistics about compliance gaps."""
-        try:
-            base_query = self.supabase.table(self.table_name)
-            
-            if compliance_domain:
-                base_query = base_query.eq("compliance_domain", compliance_domain)
-            
-            # Get all gaps for statistics
-            result = base_query.select("*").execute()
-            gaps_data = result.data
-            
-            if not gaps_data:
-                return {
-                    "total_gaps": 0,
-                    "regulatory_gaps": 0,
-                    "total_potential_fines": 0,
-                    "avg_confidence_score": 0,
-                    "resolution_rate_percent": 0,
-                    "status_breakdown": {},
-                    "risk_level_breakdown": {},
-                    "domain_breakdown": {}
-                }
-            
-            gaps = [ComplianceGap.from_dict(gap_data) for gap_data in gaps_data]
-            
-            # Calculate statistics
-            total_gaps = len(gaps)
-            regulatory_gaps = sum(1 for gap in gaps if gap.regulatory_requirement)
-            total_potential_fines = sum(gap.potential_fine_amount or 0 for gap in gaps)
-            confidence_scores = [gap.confidence_score for gap in gaps if gap.confidence_score]
-            avg_confidence_score = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
-            resolved_gaps = sum(1 for gap in gaps if gap.is_resolved())
-            resolution_rate = (resolved_gaps / total_gaps * 100) if total_gaps > 0 else 0
-            
-            # Status breakdown
-            status_breakdown = {}
-            for gap in gaps:
-                status = gap.status.value
-                status_breakdown[status] = status_breakdown.get(status, 0) + 1
-            
-            # Risk level breakdown
-            risk_level_breakdown = {}
-            for gap in gaps:
-                risk = gap.risk_level.value
-                risk_level_breakdown[risk] = risk_level_breakdown.get(risk, 0) + 1
-            
-            # Domain breakdown
-            domain_breakdown = {}
-            for gap in gaps:
-                domain = gap.compliance_domain
-                domain_breakdown[domain] = domain_breakdown.get(domain, 0) + 1
-            
-            statistics = {
-                "total_gaps": total_gaps,
-                "regulatory_gaps": regulatory_gaps,
-                "total_potential_fines": float(total_potential_fines),
-                "avg_confidence_score": float(avg_confidence_score),
-                "resolution_rate_percent": float(resolution_rate),
-                "status_breakdown": status_breakdown,
-                "risk_level_breakdown": risk_level_breakdown,
-                "domain_breakdown": domain_breakdown
-            }
-            
-            logger.debug(f"Generated compliance gap statistics: {statistics}")
-            return statistics
-            
-        except Exception as e:
-            logger.error(f"Failed to get compliance gap statistics: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to retrieve compliance gap statistics",
-                error_code="COMPLIANCE_GAP_STATISTICS_FAILED",
-                context={"compliance_domain": compliance_domain}
-            )
-
-    async def get_critical_gaps(self, skip: int = 0, limit: int = 100) -> List[ComplianceGap]:
-        """Get all critical compliance gaps."""
-        try:
-            result = self.supabase.table(self.table_name)\
-                .select("*")\
-                .eq("risk_level", "critical")\
-                .neq("status", "resolved")\
-                .neq("status", "false_positive")\
-                .neq("status", "accepted_risk")\
-                .order("detected_at", desc=True)\
-                .range(skip, skip + limit - 1)\
-                .execute()
-            
-            gaps = [ComplianceGap.from_dict(gap_data) for gap_data in result.data]
-            
-            logger.debug(f"Found {len(gaps)} critical compliance gaps")
-            return gaps
-            
-        except Exception as e:
-            logger.error(f"Failed to get critical compliance gaps: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to retrieve critical compliance gaps",
-                error_code="COMPLIANCE_GAP_CRITICAL_RETRIEVAL_FAILED"
             )
