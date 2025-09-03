@@ -22,21 +22,6 @@ from services.schemas import (
 
 # --- constants / helpers ---
 IDEMPOTENCY_TTL_SECONDS = 24 * 3600
-ALLOWED_FIELDS_CREATE = {
-    # keep this list tightly scoped to what clients may set (OWASP API3:2023)
-    "creation_method",
-    "gap_type",
-    "gap_category",
-    "gap_title",
-    "gap_description",
-    "risk_level",
-    "business_impact",
-    "regulatory_requirement",
-    "potential_fine_amount",
-    "related_documents",
-    "search_terms_used",
-    "chat_history_id",
-}
 
 router = APIRouter(tags=["Compliance Gaps"])
 limiter = Limiter(key_func=get_remote_address)

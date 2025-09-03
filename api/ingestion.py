@@ -18,19 +18,12 @@ from services.schemas import (
     AuditSessionPdfIngestionCreate,
     DocumentTagConstants,
 )
+from policies.ingestion import ALLOWED_FIELDS_UPLOAD
 
 router = APIRouter(prefix="/ingestions", tags=["Ingestion"])
 
 # --- constants / helpers ---
 IDEMPOTENCY_TTL_SECONDS = 24 * 3600
-ALLOWED_FIELDS_UPLOAD = {
-    # keep this list tightly scoped to what clients may set (OWASP API3:2023)
-    "compliance_domain",
-    "document_version", 
-    "document_tags",
-    "document_title",
-    "document_author"
-}
 
 @router.post("/upload",
     response_model=UploadResponse,

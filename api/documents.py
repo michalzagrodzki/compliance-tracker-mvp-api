@@ -9,7 +9,6 @@ from services.schemas import DocumentTagConstants, DocumentTagsRequest
 # Enhanced error handling imports
 from common.exceptions import (
     ValidationException,
-    ResourceNotFoundException,
     BusinessLogicException
 )
 from common.logging import get_logger, log_business_event, log_performance

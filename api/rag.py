@@ -18,22 +18,13 @@ from entities.chat_history import ChatHistoryFilter
 from services.schemas import QueryRequest, QueryResponse
 from dependencies import RAGServiceDep
 from common.exceptions import ValidationException, AuthorizationException, BusinessLogicException, ResourceNotFoundException
+from policies.rag import ALLOWED_QUERY_FIELDS
 
 router = APIRouter(tags=["RAG"])
 limiter = Limiter(key_func=get_remote_address)
 
 # Security configuration constants
 IDEMPOTENCY_TTL_SECONDS = 24 * 3600
-ALLOWED_QUERY_FIELDS = {
-    "question",
-    "conversation_id", 
-    "audit_session_id",
-    "match_threshold",
-    "match_count",
-    "compliance_domain",
-    "document_versions",
-    "document_tags"
-}
 
 
 @router.post("/query",

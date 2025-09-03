@@ -20,6 +20,10 @@ from services.audit_report_versions import (
     create_audit_report_version,
     serialize_uuids,
 )
+from policies.audit_reports import (
+    ALLOWED_FIELDS_CREATE,
+    ALLOWED_FIELDS_UPDATE,
+)
 
 from entities.audit_session import AuditSessionUpdate
 from services.schemas import (
@@ -31,21 +35,6 @@ from services.schemas import (
 
 # --- constants / helpers ---
 IDEMPOTENCY_TTL_SECONDS = 24 * 3600
-ALLOWED_FIELDS_CREATE = {
-    # keep this list tightly scoped to what clients may set (OWASP API3:2023)
-    "report_title",
-    "report_type", 
-    "compliance_domain",
-    "target_audience",
-    "confidentiality_level",
-    "audit_session_id",
-    "compliance_gap_ids",
-    "document_ids",
-    "pdf_ingestion_ids",
-    "include_technical_details",
-    "include_source_citations",
-    "include_confidence_scores"
-}
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/audit-reports", tags=["Audit Reports"])
@@ -320,6 +309,9 @@ async def update_existing_audit_report(
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
     update_dict = update_data.model_dump(exclude_unset=True)
+
+    # Enforce policy allowlist for update fields
+    update_dict = {k: v for k, v in update_dict.items() if k in ALLOWED_FIELDS_UPDATE}
 
     # Convert UUID fields to strings to avoid JSON serialization errors
     for field in ["user_id", "audit_session_id"]:

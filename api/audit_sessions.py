@@ -11,25 +11,14 @@ from entities.audit_session import (
 from services.schemas import (
     AuditSessionResponse,
     AuditSessionCreate as SchemaAuditSessionCreate,
-    AuditSessionUpdate as SchemaAuditSessionUpdate,
 )
 from common.exceptions import ValidationException, AuthorizationException, BusinessLogicException
+from policies.audit_sessions import (
+    ALLOWED_FIELDS_CREATE,
+)
 
 # --- constants / helpers ---
 IDEMPOTENCY_TTL_SECONDS = 24 * 3600
-ALLOWED_FIELDS_CREATE = {
-    # keep this list tightly scoped to what clients may set (OWASP API3:2023)
-    "session_name",
-    "compliance_domain"
-}
-ALLOWED_FIELDS_UPDATE = {
-    # keep this list tightly scoped to what clients may update (OWASP API3:2023)
-    "session_name",
-    "session_summary",
-    "audit_report",
-    "is_active",
-    "ended_at"
-}
 
 router = APIRouter(prefix="/audit-sessions", tags=["Audit Sessions"])
 
