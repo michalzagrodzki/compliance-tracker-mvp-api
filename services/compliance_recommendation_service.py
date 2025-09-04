@@ -232,12 +232,19 @@ class ComplianceRecommendationService:
         recommendation_type: str,
         include_implementation_plan: bool
     ) -> str:
-        """Build prompt for gap-specific recommendation."""
-        
-        prompt = f"""
-        As a compliance expert specializing in {gap.compliance_domain}, provide recommendations for addressing the following compliance gap:
+        """Build a rich, structured prompt for a gap-specific recommendation.
 
-        **Gap Details:**
+        Goal: produce a comprehensive, board-ready recommendation document inside
+        the `recommendation_text` field (Markdown with sections) and align all
+        other structured fields to the same content.
+        """
+
+        # Core gap context rendered first so the model can ground details
+        prompt = f"""
+        You are a senior compliance consultant specializing in {gap.compliance_domain}.
+        Create a comprehensive recommendation to address the following compliance gap.
+
+        Gap Details
         - Title: {gap.gap_title}
         - Description: {gap.gap_description}
         - Type: {gap.gap_type}
@@ -246,53 +253,108 @@ class ComplianceRecommendationService:
         - Business Impact: {gap.business_impact}
         - Regulatory Requirement: {gap.regulatory_requirement}
         - Original Question: {gap.original_question}
-        
-        **Context:**
+
+        Context
         - Compliance Domain: {gap.compliance_domain}
         - Detection Method: {gap.detection_method}
         - Confidence Score: {gap.confidence_score or 'N/A'}
-        
-        **Current Status:**
+
+        Current Status
         - Status: {gap.status}
         - Detected: {gap.detected_at.strftime('%Y-%m-%d')}
         - Age: {gap.get_age_in_days()} days
         """
-        
+
         if gap.potential_fine_amount:
             prompt += f"\n- Potential Fine: ${gap.potential_fine_amount:,.2f}"
-        
+
         if gap.assigned_to:
-            prompt += f"\n- Assigned to: {gap.assigned_to}"
-        
+            prompt += f"\n- Assigned To: {gap.assigned_to}"
+
         if gap.due_date:
             prompt += f"\n- Due Date: {gap.due_date.strftime('%Y-%m-%d')}"
-        
+
+        # Explicit output contract to drive length, structure, and depth
         prompt += f"""
-        
-        **Request:**
-        Provide a {recommendation_type} recommendation that includes:
-        0. Comprehensive recommendation text (a summary paragraph describing the overall recommendation)
-        1. Root cause analysis
-        2. Specific remediation actions
-        3. Risk mitigation strategies
-        4. Compliance best practices
-        5. Success metrics and KPIs
+
+        Output Requirements
+        - Audience: executive leadership and audit stakeholders.
+        - Tone: formal, precise, action-oriented. Avoid vague statements.
+        - Length: 700–1200 words in `recommendation_text`.
+        - Format for `recommendation_text`: Markdown with H1/H2 headings and lists.
+        - Be specific: reference the stated regulatory requirement and gap details.
+
+        Populate the following fields in the structured response:
+        0. recommendation_text: a full Markdown document with the sections below.
+        1. root_cause_analysis: 1–2 concise paragraphs.
+        2. remediation_actions: 6–10 specific, verifiable actions.
+        3. risk_mitigation: 4–6 strategies tied to identified risks.
+        4. best_practices: 5–8 items relevant to {gap.compliance_domain} and {gap.regulatory_requirement}.
+        5. success_metrics: 5–8 measurable KPIs with targets and timeframes.
+        6. priority_level: one of [critical, high, medium, low], aligned with {gap.risk_level}.
+        7. estimated_effort: realistic duration and effort (e.g., "6–8 weeks, 2–3 FTE").
+        {"8. implementation_phases, 9. resource_requirements, 10. potential_challenges, 11. mitigation_strategies (required)" if include_implementation_plan else ""}
+
+        `recommendation_text` Section Layout (Markdown)
+        # Recommendation: {gap.gap_title}
+        ## Executive Summary
+        - 3–5 sentences summarizing the compliance gap, business risk, and targeted outcome.
+        ## Gap Analysis
+        - Enumerate specific deficiencies observed (what is missing/insufficient today) mapped to {gap.regulatory_requirement}.
+        ## Recommended Solution
+        - Describe the target state and key policy, process, and control changes.
+        ## Implementation Steps
+        - Provide a numbered plan with phases; each phase includes:
+          - Timeline (e.g., "Weeks 1–2"), Objectives, Activities, Deliverables
+          - Control requirements satisfied and stakeholders responsible
+        ## Resources Required
+        - Personnel (roles with estimated hours), Technology/Tooling, Budget notes
+        ## Success Criteria
+        - Measurable outcomes and acceptance criteria tied to auditability
+        ## Risk Mitigation
+        - Likely risks, impact, likelihood, and mitigations
+        ## Next Steps
+        - Immediate actions for the next 1–2 weeks
+
+        Important Guidance
+        - Use the provided gap specifics; do not invent unrelated standards.
+        - Where details are not provided, state reasonable assumptions explicitly.
+        - Keep recommendations practical for a typical mid-size organization.
+
+        Example format for `recommendation_text` (use as a style guide, not to copy verbatim):
+        # Recommendation: Enhancing Organizational Policy for ISO 27001 Control A.7.1.3
+
+        ## Executive Summary
+        This recommendation aims to address compliance gaps ... ensure comprehensive compliance ...
+
+        ## Gap Analysis
+        The current policy lacks explicit documentation ... Statement of Applicability ...
+
+        ## Recommended Solution
+        Update policy to explicitly define and document requirements ... SoA ...
+
+        ## Implementation Steps
+        1. Update Policy Content (Timeline: 30 days) ...
+        2. Review and Approval (Timeline: 15 days) ...
+        3. Communication and Training (Timeline: 45 days) ...
+        4. Implementation Rollout (Timeline: Ongoing) ...
+
+        ## Resources Required
+        Personnel ... Technology ... Budget ...
+
+        ## Success Criteria
+        ...
+
+        ## Risk Mitigation
+        ...
+
+        ## Next Steps
+        ...
+
+        Now produce a {recommendation_type} recommendation that satisfies the above.
+        Ensure the structured fields are consistent with the Markdown document.
         """
-        
-        if include_implementation_plan:
-            prompt += """
-        6. Detailed implementation plan with timeline
-        7. Resource requirements
-        8. Potential challenges and mitigation
-        """
-        
-        prompt += """
-        
-        Focus on practical, actionable recommendations that can be implemented effectively within a typical organizational structure.
-        
-        **Important:** Ensure the recommendation_text field provides a clear, executive-level summary of the overall recommendation in 2-3 paragraphs.
-        """
-        
+
         return prompt
 
     def _build_remediation_plan_prompt(
