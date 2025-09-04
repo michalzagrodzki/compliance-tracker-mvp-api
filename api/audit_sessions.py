@@ -346,8 +346,7 @@ async def activate_audit_session(
     audit_session_service: AuditSessionServiceDep = None,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
-    # NIST SP 800-53 SI-10: Input validation
-    ensure_json_request(request)
+    # No body expected; do not enforce JSON content-type on this route
     ua = normalize_user_agent(request.headers.get("user-agent"))
     
     try:

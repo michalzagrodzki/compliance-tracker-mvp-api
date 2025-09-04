@@ -124,6 +124,26 @@ class SupabaseRepository(BaseRepository[T], ABC):
         
         return query
 
+    async def delete(self, entity_id: str) -> bool:
+        """Default hard delete by ID.
+
+        Concrete repositories can override this to implement soft-delete
+        semantics when needed. Returns True if a record was deleted.
+        """
+        try:
+            res = (
+                self.supabase
+                .table(self.table_name)
+                .delete()
+                .eq("id", entity_id)
+                .execute()
+            )
+            # Supabase python client returns deleted rows in data
+            return bool(getattr(res, "data", None))
+        except Exception:
+            # Mirror the defensive pattern used in exists()/count()
+            return False
+
     async def exists(self, entity_id: str) -> bool:
         """Check if an entity exists by its ID."""
         try:

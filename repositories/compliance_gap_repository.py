@@ -5,6 +5,8 @@ ComplianceGap repository implementation using Supabase.
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
+from decimal import Decimal
+from uuid import UUID
 
 from repositories.base import SupabaseRepository
 from entities.compliance_gap import (
@@ -31,6 +33,29 @@ class ComplianceGapRepository(SupabaseRepository[ComplianceGap]):
     def __init__(self, supabase_client, table_name: str = "compliance_gaps"):
         super().__init__(supabase_client, table_name)
 
+    def _sanitize_for_json(self, value):
+        """Recursively convert non-JSON-serializable types to JSON-safe values.
+
+        - Decimal -> float
+        - datetime -> ISO string
+        - UUID -> str
+        - dict/list/tuple/set -> recurse
+        """
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, Decimal):
+            # Convert Decimal to float for JSON/DB numeric
+            return float(value)
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, dict):
+            return {k: self._sanitize_for_json(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [self._sanitize_for_json(v) for v in value]
+        return value
+
     async def create(self, gap_create: ComplianceGapCreate) -> ComplianceGap:
         """Create a new compliance gap."""
         try:
@@ -48,6 +73,13 @@ class ComplianceGapRepository(SupabaseRepository[ComplianceGap]):
                 "updated_at": now.isoformat(),
                 "auto_generated": True
             })
+            # Ensure array columns have sensible defaults if omitted
+            if "related_documents" not in gap_data or gap_data["related_documents"] is None:
+                gap_data["related_documents"] = []
+            if "recommended_actions" not in gap_data or gap_data["recommended_actions"] is None:
+                gap_data["recommended_actions"] = []
+
+            gap_data = self._sanitize_for_json(gap_data)
             
             # Insert into database
             result = self.supabase.table(self.table_name).insert(gap_data).execute()
@@ -112,6 +144,7 @@ class ComplianceGapRepository(SupabaseRepository[ComplianceGap]):
             
             # Add updated timestamp
             update_dict["updated_at"] = datetime.utcnow().isoformat()
+            update_dict = self._sanitize_for_json(update_dict)
             
             # Update in database
             result = self.supabase.table(self.table_name)\
@@ -242,13 +275,9 @@ class ComplianceGapRepository(SupabaseRepository[ComplianceGap]):
             }
             
             # Add status-specific timestamps
-            if status == GapStatus.ACKNOWLEDGED and status != GapStatus.ACKNOWLEDGED:
+            if status == GapStatus.ACKNOWLEDGED:
                 update_data["acknowledged_at"] = now
-            elif status == GapStatus.RESOLVED:
-                update_data["resolved_at"] = now
-            elif status == GapStatus.FALSE_POSITIVE:
-                update_data["resolved_at"] = now
-            elif status == GapStatus.ACCEPTED_RISK:
+            elif status in (GapStatus.RESOLVED, GapStatus.FALSE_POSITIVE, GapStatus.ACCEPTED_RISK):
                 update_data["resolved_at"] = now
             
             if notes:

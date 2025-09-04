@@ -7,13 +7,10 @@ from auth.decorators import ValidatedUser, authorize
 from policies.compliance_gaps import ALLOWED_FIELDS_CREATE_DIRECT, ALLOWED_FIELDS_CREATE_FROM_CHAT, ALLOWED_FIELDS_UPDATE
 from security.endpoint_validator import compute_fingerprint, require_idempotency, store_idempotency, normalize_user_agent, ensure_json_request
 from dependencies import (
-    get_compliance_recommendation_service,
-    get_compliance_gap_repository,
+    ComplianceRecommendationServiceDep,
     ComplianceGapServiceDep,
 )
 from services.schemas import (
-    ComplianceGapCreate,
-    ComplianceGapFromChatHistoryRequest,
     ComplianceGapUpdate,
     ComplianceGapStatusUpdate,
     ComplianceRecommendationRequest,
@@ -112,10 +109,8 @@ async def create_new_compliance_gap(
     service: ComplianceGapServiceDep,
     request: Request,
     response: Response,
-    request_data: Union[ComplianceGapCreate, ComplianceGapFromChatHistoryRequest] = Body(
-        ...,
-        discriminator="creation_method",
-        description="Either a complete gap definition or a reference to chat history"
+    request_data: Dict[str, Any] = Body(
+        ..., description="Either a complete gap definition or a reference to chat history"
     ),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     current_user: ValidatedUser = None,
@@ -143,7 +138,14 @@ async def create_new_compliance_gap(
         response.headers["Location"] = cached.get("location", "")
         return cached["body"]
     
-    created_gap = await service.create_compliance_gap(payload | {"user_agent": ua})
+    # Inject server-controlled fields
+    server_injected = {
+        "user_id": getattr(current_user, "id", None),
+        "user_agent": ua,
+        # Optionally ip address if present
+        "ip_address": request.client.host if request.client else None,
+    }
+    created_gap = await service.create_compliance_gap({k: v for k, v in (payload | server_injected).items() if v is not None})
     created = created_gap.model_dump() if hasattr(created_gap, "model_dump") else dict(created_gap)
     location = f"/v1/compliance-gaps/{created['id']}"
     body = {"data": created, "meta": {"message": "Compliance gap created"}}
@@ -337,11 +339,11 @@ async def create_compliance_recommendation(
     request_data: ComplianceRecommendationRequest,
     request: Request,
     current_user: ValidatedUser = None,
-    recommendation_service = Depends(get_compliance_recommendation_service)
+    recommendation_service: ComplianceRecommendationServiceDep = None,
+    service: ComplianceGapServiceDep = None,
 ) -> ComplianceRecommendationResponse:
     if getattr(request_data, "gap_id", None):
-        gap_repo = get_compliance_gap_repository()
-        gap = await gap_repo.get_by_id(request_data.gap_id)
+        gap = await service.get_compliance_gap_by_id(request_data.gap_id)
 
         if not gap:
             raise HTTPException(status_code=404, detail="Compliance gap not found")

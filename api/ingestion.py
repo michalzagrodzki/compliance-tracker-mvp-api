@@ -431,13 +431,12 @@ async def add_pdf_ingestion_to_audit_session(
 ) -> Dict[str, Any]:
     # Ensure the session exists and the user has access
     await audit_session_service.get_session_by_id(session_id, current_user.id)
-    # Delegate to legacy relationship method (migration in progress)
-    from services.audit_sessions import add_pdf_ingestion_to_session
-    return add_pdf_ingestion_to_session(
+    # Use service method to create relationship
+    return await audit_session_service.add_pdf_ingestion_to_session(
         session_id=session_id,
         pdf_ingestion_id=str(request_data.pdf_ingestion_id),
         added_by=str(current_user.id),
-        notes=request_data.notes
+        notes=request_data.notes,
     )
 
 @router.get("/audit-sessions/{session_id}",
@@ -455,11 +454,10 @@ async def get_audit_session_pdf_ingestions(
 ) -> List[PdfIngestionWithRelationship]:
     # Ensure the session exists and the user has access
     await audit_session_service.get_session_by_id(session_id, current_user.id)
-    from services.audit_sessions import get_pdf_ingestions_for_session
-    results = get_pdf_ingestions_for_session(
+    results = await audit_session_service.get_pdf_ingestions_for_session(
         session_id=session_id,
         skip=skip,
-        limit=limit
+        limit=limit,
     )
     return [PdfIngestionWithRelationship(**item) for item in results]
 
@@ -477,8 +475,7 @@ async def remove_pdf_ingestion_from_audit_session(
 ) -> Dict[str, Any]:
     # Ensure the session exists and the user has access
     await audit_session_service.get_session_by_id(session_id, current_user.id)
-    from services.audit_sessions import remove_pdf_ingestion_from_session
-    return remove_pdf_ingestion_from_session(
+    return await audit_session_service.remove_pdf_ingestion_from_session(
         session_id=session_id,
-        pdf_ingestion_id=pdf_ingestion_id
+        pdf_ingestion_id=pdf_ingestion_id,
     )

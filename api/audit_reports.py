@@ -106,6 +106,7 @@ async def create_new_audit_report(
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     audit_report_service: AuditReportServiceDep = None,
     audit_session_service: AuditSessionServiceDep = None,
+    audit_log_service: AuditLogServiceDep = None,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
     """Create new audit report with enhanced security controls."""
@@ -235,23 +236,28 @@ async def create_new_audit_report(
             )
 
         # Security audit logging (NIST CSF 2.0 DE.AE-03: Event data aggregation)
-        create_audit_log(
-            object_type="audit_report",
-            user_id=current_user.id,
-            object_id=created_report["id"],
-            action="create",
-            compliance_domain=report_dict.get("compliance_domain"),
-            audit_session_id=report_dict.get("audit_session_id"),
-            risk_level="high",
-            details={
-                "report_title": report_dict.get("report_title"),
-                "report_type": report_dict.get("report_type"),
-                "confidentiality_level": report_dict.get("confidentiality_level"),
-                "method": "api_endpoint"
-            },
-            ip_address=ip_address,
-            user_agent=ua
-        )
+        try:
+            audit_log = AuditLogCreate(
+                object_type="audit_report",
+                object_id=str(created_report["id"]),
+                action="create",
+                user_id=str(current_user.id),
+                compliance_domain=report_dict.get("compliance_domain"),
+                audit_session_id=str(report_dict.get("audit_session_id")) if report_dict.get("audit_session_id") else None,
+                risk_level="high",
+                details={
+                    "report_title": report_dict.get("report_title"),
+                    "report_type": report_dict.get("report_type"),
+                    "confidentiality_level": report_dict.get("confidentiality_level"),
+                    "method": "api_endpoint"
+                },
+                ip_address=ip_address,
+                user_agent=ua,
+                tags=[],
+            )
+            await audit_log_service.create_audit_log(audit_log, str(current_user.id))
+        except Exception:
+            logger.debug("Audit log creation skipped/failed for create_new_audit_report", exc_info=True)
 
         # Prepare structured response with location header
         location = f"/v1/audit-reports/{created_report['id']}"

@@ -1,10 +1,17 @@
 import logging
+import time
 from typing import List, Dict, Any, Optional
 from fastapi import HTTPException
 from db.supabase_client import create_supabase_client
 from config.config import settings
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
+try:
+    import httpx
+    import httpcore
+except Exception:  # pragma: no cover - optional imports for type checks
+    httpx = None
+    httpcore = None
 
 logger = logging.getLogger(__name__)
 supabase = create_supabase_client()
@@ -48,26 +55,53 @@ def list_users(skip: int = 0, limit: int = 10, role: Optional[str] = None, is_ac
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 def get_user_by_id(user_id: str) -> Dict[str, Any]:
-    try:
-        logger.info(f"Fetching user with ID: {user_id}")
-        resp = (
-            supabase
-            .table(settings.supabase_table_users)
-            .select("id, email, full_name, role, compliance_domains, is_active, created_at, updated_at")
-            .eq("id", user_id)
-            .execute()
-        )
-        
-        if not resp.data:
-            raise HTTPException(status_code=404, detail=f"User with ID {user_id} not found")
-        
-        logger.info(f"Found user: {user_id}")
-        return resp.data[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to fetch user {user_id}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    """Fetch user with transient network retry to reduce spurious 5xx.
+
+    Retries on httpx/httpcore ReadError a couple of times and refreshes the
+    Supabase client between attempts.
+    """
+    global supabase
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            logger.info(f"Fetching user with ID: {user_id}")
+            resp = (
+                supabase
+                .table(settings.supabase_table_users)
+                .select("id, email, full_name, role, compliance_domains, is_active, created_at, updated_at")
+                .eq("id", user_id)
+                .execute()
+            )
+
+            if not resp.data:
+                raise HTTPException(status_code=404, detail=f"User with ID {user_id} not found")
+
+            logger.info(f"Found user: {user_id}")
+            return resp.data[0]
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            is_read_error = False
+            if httpx and isinstance(e, getattr(httpx, 'ReadError', tuple())):
+                is_read_error = True
+            if httpcore and isinstance(e, getattr(httpcore, 'ReadError', tuple())):
+                is_read_error = True
+            if not is_read_error and 'ReadError' not in str(type(e)) and 'Resource temporarily unavailable' not in str(e):
+                logger.error(f"Failed to fetch user {user_id}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+            # Transient read error: retry with backoff and fresh client
+            logger.warning(
+                f"Transient read error fetching user {user_id} (attempt {attempt}/{max_attempts}); retrying..."
+            )
+            # Recreate the client to reset connections
+            supabase = create_supabase_client()
+            if attempt < max_attempts:
+                time.sleep(0.2 * attempt)
+            else:
+                logger.error(f"Failed to fetch user {user_id} after retries", exc_info=True)
+                raise HTTPException(status_code=503, detail="Temporary database read error, please retry")
 
 def get_user_by_email(email: str) -> Dict[str, Any]:
     try:

@@ -47,12 +47,12 @@ class GapStatus(str, Enum):
 
 
 class DetectionMethod(str, Enum):
-    """How the gap was detected."""
-    AUTOMATED_ANALYSIS = "automated_analysis"
+    """How the gap was detected. Must match DB CHECK constraint."""
+    QUERY_ANALYSIS = "query_analysis"
+    PERIODIC_SCAN = "periodic_scan"
+    DOCUMENT_UPLOAD = "document_upload"
     MANUAL_REVIEW = "manual_review"
-    AUDIT_FINDING = "audit_finding"
-    CHAT_ANALYSIS = "chat_analysis"
-    DOCUMENT_ANALYSIS = "document_analysis"
+    EXTERNAL_AUDIT = "external_audit"
 
 
 class ComplianceGap(BaseModel):
@@ -80,7 +80,7 @@ class ComplianceGap(BaseModel):
     search_terms_used: Optional[List[str]] = Field(default_factory=list)
     similarity_threshold_used: Optional[Decimal] = None
     best_match_score: Optional[Decimal] = None
-    detection_method: DetectionMethod = DetectionMethod.AUTOMATED_ANALYSIS
+    detection_method: DetectionMethod = DetectionMethod.QUERY_ANALYSIS
     confidence_score: Optional[Decimal] = None
     false_positive_likelihood: Optional[Decimal] = None
     
@@ -124,6 +124,12 @@ class ComplianceGap(BaseModel):
     def validate_risk_level(cls, v):
         if isinstance(v, str):
             return RiskLevel(v)
+        return v
+
+    @validator('user_id', 'audit_session_id', pre=True)
+    def _coerce_ids_to_str(cls, v):
+        if isinstance(v, UUID):
+            return str(v)
         return v
 
     @validator('status', pre=True)
@@ -323,12 +329,19 @@ class ComplianceGapCreate(BaseModel):
     search_terms_used: Optional[List[str]] = Field(default_factory=list)
     similarity_threshold_used: Optional[Decimal] = None
     best_match_score: Optional[Decimal] = None
-    detection_method: DetectionMethod = DetectionMethod.AUTOMATED_ANALYSIS
+    detection_method: DetectionMethod = DetectionMethod.QUERY_ANALYSIS
     confidence_score: Optional[Decimal] = None
     risk_level: RiskLevel = RiskLevel.MEDIUM
     business_impact: BusinessImpact = BusinessImpact.MEDIUM
     regulatory_requirement: bool = False
     potential_fine_amount: Optional[Decimal] = None
+
+    # Optional remediation and references
+    recommendation_type: Optional[str] = None
+    recommendation_text: Optional[str] = None
+    recommended_actions: Optional[List[str]] = None
+    related_documents: Optional[List[str]] = None
+    resolution_notes: Optional[str] = None
     
     # Audit fields
     ip_address: Optional[str] = None
@@ -337,6 +350,13 @@ class ComplianceGapCreate(BaseModel):
 
     class Config:
         use_enum_values = True
+
+    @validator('user_id', 'audit_session_id', pre=True)
+    def _coerce_uuid_to_str(cls, v):
+        """Accept UUID objects and coerce to string for required ID fields."""
+        if isinstance(v, UUID):
+            return str(v)
+        return v
 
 
 class ComplianceGapUpdate(BaseModel):

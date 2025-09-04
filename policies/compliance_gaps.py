@@ -18,7 +18,11 @@ ALLOWED_FIELDS_CREATE_FROM_CHAT: Set[str] = {
 
 ALLOWED_FIELDS_CREATE_DIRECT: Set[str] = {
     "creation_method", "chat_history_id", "pdf_ingestion_id",
+    # Required core fields for direct creation
+    "audit_session_id", "compliance_domain", "original_question",
+    # Gap details
     "gap_type", "gap_category", "gap_title", "gap_description",
+    # Optional context and metrics
     "expected_answer_type", "search_terms_used",
     "similarity_threshold_used", "best_match_score",
     "risk_level", "business_impact", "regulatory_requirement", "potential_fine_amount",

@@ -90,6 +90,35 @@ class AuditReportService:
             if not user.is_admin() and str(report_data.get("user_id")) != str(user_id):
                 report_data["user_id"] = user_id
 
+            # Normalize recommendations/action_items to JSON strings to avoid downstream warnings
+            def _as_json_array(val: Any) -> str:
+                import json as _json
+                if val is None:
+                    return "[]"
+                if isinstance(val, (list, tuple)):
+                    return _json.dumps(list(val))
+                if isinstance(val, str):
+                    s = val.strip()
+                    if not s:
+                        return "[]"
+                    try:
+                        parsed = _json.loads(s)
+                        if isinstance(parsed, (list, dict)):
+                            return _json.dumps(parsed)
+                    except Exception:
+                        # Fall through to wrap string as a single item array
+                        return _json.dumps([s])
+                # Fallback: wrap as array
+                try:
+                    return _json.dumps([val])
+                except Exception:
+                    return "[]"
+
+            if "recommendations" in report_data:
+                report_data["recommendations"] = _as_json_array(report_data.get("recommendations"))
+            if "action_items" in report_data:
+                report_data["action_items"] = _as_json_array(report_data.get("action_items"))
+
             created = await self.report_repository.create(report_data)
             
             # Deserialize for return

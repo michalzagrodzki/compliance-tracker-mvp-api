@@ -1,15 +1,20 @@
 """
 ISO Control repository implementation using Supabase.
 """
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+import uuid
 
 from repositories.base import SupabaseRepository
 from entities.iso_control import (
-    ISOControl, 
-    ISOControlFilter
+    ISOControl,
+    ISOControlFilter,
+    ISOControlCreate,
+    ISOControlUpdate,
 )
 from common.exceptions import (
-    BusinessLogicException
+    BusinessLogicException,
+    ResourceNotFoundException,
 )
 from common.logging import get_logger
 
@@ -21,6 +26,100 @@ class ISOControlRepository(SupabaseRepository[ISOControl]):
     """
     def __init__(self, supabase_client, table_name: str = "iso_controls"):
         super().__init__(supabase_client, table_name)
+
+    async def create(self, control_create: ISOControlCreate) -> ISOControl:
+        """Create a new ISO control entry."""
+        try:
+            control_id = str(uuid.uuid4())
+            now = datetime.utcnow().isoformat()
+
+            payload: Dict[str, Any] = control_create.model_dump()
+            payload.update({
+                "id": control_id,
+                "created_at": now,
+                "updated_at": now,
+            })
+
+            result = self.supabase.table(self.table_name).insert(payload).execute()
+
+            if not getattr(result, "data", None):
+                raise BusinessLogicException(
+                    detail="Failed to create ISO control",
+                    error_code="ISO_CONTROL_CREATION_FAILED",
+                )
+
+            return ISOControl.from_dict(result.data[0])
+        except Exception as e:
+            logger.error(f"Failed to create ISO control: {e}", exc_info=True)
+            raise BusinessLogicException(
+                detail="Failed to create ISO control",
+                error_code="ISO_CONTROL_CREATION_FAILED",
+            )
+
+    async def get_by_id(self, control_id: str) -> Optional[ISOControl]:
+        """Retrieve a single ISO control by ID."""
+        try:
+            res = (
+                self.supabase
+                .table(self.table_name)
+                .select("*")
+                .eq("id", str(control_id))
+                .limit(1)
+                .execute()
+            )
+            if not getattr(res, "data", None):
+                return None
+            return ISOControl.from_dict(res.data[0])
+        except Exception as e:
+            logger.error(f"Failed to get ISO control {control_id}: {e}", exc_info=True)
+            raise BusinessLogicException(
+                detail="Failed to retrieve ISO control",
+                error_code="ISO_CONTROL_RETRIEVAL_FAILED",
+                context={"id": control_id} if isinstance(e, BusinessLogicException) else None,
+            )
+
+    async def update(self, control_id: str, update_data: ISOControlUpdate) -> Optional[ISOControl]:
+        """Update an ISO control by ID."""
+        try:
+            # Ensure record exists
+            if not await self.exists(str(control_id)):
+                raise ResourceNotFoundException(
+                    resource_type="ISOControl",
+                    resource_id=str(control_id),
+                )
+
+            update_dict: Dict[str, Any] = {
+                k: v for k, v in update_data.model_dump().items() if v is not None
+            }
+            if not update_dict:
+                return await self.get_by_id(str(control_id))
+
+            update_dict["updated_at"] = datetime.utcnow().isoformat()
+
+            res = (
+                self.supabase
+                .table(self.table_name)
+                .update(update_dict)
+                .eq("id", str(control_id))
+                .execute()
+            )
+
+            if not getattr(res, "data", None):
+                raise BusinessLogicException(
+                    detail="Failed to update ISO control",
+                    error_code="ISO_CONTROL_UPDATE_FAILED",
+                )
+
+            return ISOControl.from_dict(res.data[0])
+        except ResourceNotFoundException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to update ISO control {control_id}: {e}", exc_info=True)
+            raise BusinessLogicException(
+                detail="Failed to update ISO control",
+                error_code="ISO_CONTROL_UPDATE_FAILED",
+                context={"id": str(control_id)},
+            )
 
     async def list(
         self,

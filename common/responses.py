@@ -4,6 +4,7 @@ Standardized API response formats for consistent error handling and success resp
 
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime, timezone
+from uuid import UUID
 from pydantic import BaseModel
 from fastapi import status
 from fastapi.responses import JSONResponse
@@ -47,6 +48,50 @@ class ValidationErrorResponse(BaseModel):
     timestamp: str
 
 
+def _ensure_jsonable(value: Any) -> Any:
+    """Recursively convert common non-JSON-serializable types to JSON-safe values.
+
+    Handles dicts, lists/tuples/sets, datetime, UUID, and Pydantic models.
+    Fallback converts unknown objects to str().
+    """
+    # Primitives
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    # Pydantic models
+    if isinstance(value, BaseModel):
+        return _ensure_jsonable(value.model_dump(exclude_none=True))
+
+    # Datetime
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    # UUID
+    if isinstance(value, UUID):
+        return str(value)
+
+    # Dict
+    if isinstance(value, dict):
+        return {k: _ensure_jsonable(v) for k, v in value.items()}
+
+    # List/Tuple
+    if isinstance(value, (list, tuple)):
+        return [_ensure_jsonable(v) for v in value]
+
+    # Set
+    if isinstance(value, set):
+        return [_ensure_jsonable(v) for v in value]
+
+    # Fallback to string
+    try:
+        # If it is already JSON serializable, return as-is
+        import json
+        json.dumps(value)
+        return value
+    except Exception:
+        return str(value)
+
+
 def create_success_response(
     data: Any,
     meta: Optional[Dict[str, Any]] = None,
@@ -61,10 +106,8 @@ def create_success_response(
         timestamp=datetime.now(timezone.utc).isoformat()
     )
     
-    return JSONResponse(
-        content=response_data.model_dump(exclude_none=True),
-        status_code=status_code
-    )
+    content = _ensure_jsonable(response_data.model_dump(exclude_none=True))
+    return JSONResponse(content=content, status_code=status_code)
 
 
 def create_error_response(
@@ -89,10 +132,8 @@ def create_error_response(
         timestamp=datetime.now(timezone.utc).isoformat()
     )
     
-    return JSONResponse(
-        content=response_data.model_dump(exclude_none=True),
-        status_code=status_code
-    )
+    content = _ensure_jsonable(response_data.model_dump(exclude_none=True))
+    return JSONResponse(content=content, status_code=status_code)
 
 
 def create_validation_error_response(
@@ -107,15 +148,13 @@ def create_validation_error_response(
     
     response_data = ValidationErrorResponse(
         error=error_detail,
-        validation_errors=validation_errors,
+        validation_errors=_ensure_jsonable(validation_errors),
         request_id=request_id_var.get(),
         timestamp=datetime.now(timezone.utc).isoformat()
     )
     
-    return JSONResponse(
-        content=response_data.model_dump(exclude_none=True),
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
-    )
+    content = _ensure_jsonable(response_data.model_dump(exclude_none=True))
+    return JSONResponse(content=content, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
 
 def create_paginated_response(
@@ -151,10 +190,8 @@ def create_paginated_response(
         timestamp=datetime.now(timezone.utc).isoformat()
     )
     
-    return JSONResponse(
-        content=response_data.model_dump(exclude_none=True),
-        status_code=status.HTTP_200_OK
-    )
+    content = _ensure_jsonable(response_data.model_dump(exclude_none=True))
+    return JSONResponse(content=content, status_code=status.HTTP_200_OK)
 
 
 def create_not_found_response(

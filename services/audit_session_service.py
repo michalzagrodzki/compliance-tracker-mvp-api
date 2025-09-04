@@ -2,7 +2,7 @@
 Audit Session service using Repository pattern.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
 from entities.audit_session import (
@@ -21,6 +21,8 @@ from common.exceptions import (
     AuthorizationException
 )
 from common.logging import get_logger, log_business_event, log_performance
+from config.config import settings
+from db.supabase_client import create_supabase_client
 
 logger = get_logger("audit_session_service")
 
@@ -383,6 +385,145 @@ class AuditSessionService:
                 detail="Failed to open audit session",
                 error_code="AUDIT_SESSION_OPEN_FAILED",
                 context={"session_id": session_id}
+            )
+
+    # --- PDF ingestion relationship helpers ---
+    async def add_pdf_ingestion_to_session(
+        self,
+        session_id: str,
+        pdf_ingestion_id: str,
+        added_by: str,
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Associate a PDF ingestion with an audit session (relationship row)."""
+        try:
+            supabase = create_supabase_client()
+            payload = {
+                "id": str(__import__("uuid").uuid4()),
+                "audit_session_id": str(session_id),
+                "pdf_ingestion_id": str(pdf_ingestion_id),
+                "added_at": datetime.now(timezone.utc).isoformat(),
+                "added_by": str(added_by),
+                "notes": notes,
+            }
+            res = (
+                supabase
+                .table(settings.supabase_table_audit_session_pdf_ingestions)
+                .insert(payload)
+                .execute()
+            )
+            data = getattr(res, "data", None) or []
+            if not data:
+                raise BusinessLogicException(
+                    detail="Failed to link PDF ingestion to audit session",
+                    error_code="AUDIT_SESSION_RELATIONSHIP_CREATE_FAILED",
+                    context={"session_id": session_id, "pdf_ingestion_id": pdf_ingestion_id},
+                )
+            return dict(data[0])
+        except BusinessLogicException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"add_pdf_ingestion_to_session failed for session {session_id}: {e}",
+                exc_info=True,
+            )
+            raise BusinessLogicException(
+                detail="Failed to link PDF ingestion to audit session",
+                error_code="AUDIT_SESSION_RELATIONSHIP_CREATE_FAILED",
+                context={"session_id": session_id, "pdf_ingestion_id": pdf_ingestion_id},
+            )
+
+    async def get_pdf_ingestions_for_session(
+        self,
+        session_id: str,
+        skip: int = 0,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Return ingestions linked to a session with relationship metadata merged."""
+        try:
+            supabase = create_supabase_client()
+            rel_res = (
+                supabase
+                .table(settings.supabase_table_audit_session_pdf_ingestions)
+                .select("*")
+                .eq("audit_session_id", str(session_id))
+                .order("added_at", desc=True)
+                .range(skip, max(skip, skip + limit - 1))
+                .execute()
+            )
+            relationships = list((getattr(rel_res, "data", None) or []))
+            if not relationships:
+                return []
+
+            ingestion_ids = [r.get("pdf_ingestion_id") for r in relationships if r.get("pdf_ingestion_id")]
+            if not ingestion_ids:
+                return []
+
+            ing_res = (
+                supabase
+                .table(settings.supabase_table_pdf_ingestion)
+                .select("*")
+                .in_("id", ingestion_ids)
+                .execute()
+            )
+            ing_by_id = {row.get("id"): row for row in ((getattr(ing_res, "data", None) or []))}
+
+            merged: List[Dict[str, Any]] = []
+            for rel in relationships:
+                ing = ing_by_id.get(rel.get("pdf_ingestion_id"))
+                if not ing:
+                    continue
+                item = dict(ing)
+                item.update(
+                    relationship_id=rel.get("id"),
+                    added_at=rel.get("added_at"),
+                    added_by=rel.get("added_by"),
+                    notes=rel.get("notes"),
+                )
+                merged.append(item)
+            return merged
+        except Exception as e:
+            logger.error(
+                f"get_pdf_ingestions_for_session failed for session {session_id}: {e}",
+                exc_info=True,
+            )
+            raise BusinessLogicException(
+                detail="Failed to list session PDF ingestions",
+                error_code="AUDIT_SESSION_RELATIONSHIP_LIST_FAILED",
+                context={"session_id": session_id},
+            )
+
+    async def remove_pdf_ingestion_from_session(
+        self,
+        session_id: str,
+        pdf_ingestion_id: str,
+    ) -> Dict[str, Any]:
+        """Remove the relationship row linking a PDF to an audit session."""
+        try:
+            supabase = create_supabase_client()
+            res = (
+                supabase
+                .table(settings.supabase_table_audit_session_pdf_ingestions)
+                .delete()
+                .eq("audit_session_id", str(session_id))
+                .eq("pdf_ingestion_id", str(pdf_ingestion_id))
+                .execute()
+            )
+            deleted = list((getattr(res, "data", None) or []))
+            return {
+                "removed_count": len(deleted),
+                "audit_session_id": str(session_id),
+                "pdf_ingestion_id": str(pdf_ingestion_id),
+            }
+        except Exception as e:
+            logger.error(
+                f"remove_pdf_ingestion_from_session failed for session {session_id}: {e}",
+                exc_info=True,
+            )
+            raise BusinessLogicException(
+                detail="Failed to unlink PDF ingestion from audit session",
+                error_code="AUDIT_SESSION_RELATIONSHIP_DELETE_FAILED",
+                context={"session_id": session_id, "pdf_ingestion_id": pdf_ingestion_id},
             )
 
 # Factory function

@@ -44,8 +44,9 @@ class AuditReportRepository(SupabaseRepository[Dict[str, Any]]):
                 "document_ids": report_data.get("document_ids", []),
                 "pdf_ingestion_ids": report_data.get("pdf_ingestion_ids", []),
                 "detailed_findings": report_data.get("detailed_findings", {}),
-                "recommendations": report_data.get("recommendations", ""),
-                "action_items": report_data.get("action_items", ""),
+                # Store as JSON strings; default to empty arrays to avoid deserialization warnings
+                "recommendations": report_data.get("recommendations", "[]"),
+                "action_items": report_data.get("action_items", "[]"),
                 "appendices": report_data.get("appendices", {}),
                 "distributed_to": report_data.get("distributed_to", []),
                 "audit_trail": report_data.get("audit_trail", []),
@@ -150,3 +151,25 @@ class AuditReportRepository(SupabaseRepository[Dict[str, Any]]):
                 error_code="AUDIT_REPORT_LIST_BY_DOMAINS_FAILED",
             )
 
+    async def list(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        filters: Optional[Dict[str, Any]] = None,
+        order_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Generic list implementation with optional filters and ordering."""
+        try:
+            q = self.supabase.table(self.table_name).select("*")
+            if filters:
+                # Use common filter builder (handles lists and operators dict)
+                q = self._build_filters(q, filters)
+            q = self._apply_ordering(q, order_by or "-report_generated_at").range(skip, skip + limit - 1)
+            res = q.execute()
+            return list(getattr(res, "data", []) or [])
+        except Exception as e:
+            logger.error(f"Failed to list audit reports: {e}", exc_info=True)
+            raise BusinessLogicException(
+                detail="Failed to retrieve audit reports",
+                error_code="AUDIT_REPORT_LIST_FAILED",
+            )
