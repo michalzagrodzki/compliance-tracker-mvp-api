@@ -25,7 +25,7 @@ class AIRequest:
     """Base request for AI operations."""
     prompt: str
     max_tokens: Optional[int] = 1000
-    temperature: Optional[float] = 0.7
+    temperature: Optional[float] = 0.1
     model: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
 
@@ -127,7 +127,7 @@ class OpenAIAdapter(BaseAIAdapter):
                     model=model,
                     messages=messages,
                     max_tokens=request.max_tokens or 1000,
-                    temperature=request.temperature or 0.7
+                    temperature=request.temperature or 0.1
                 ),
                 timeout=self.timeout
             )
@@ -245,7 +245,7 @@ class OpenAIAdapter(BaseAIAdapter):
                     messages=messages,
                     functions=[function_definition],
                     function_call={"name": "generate_response"},
-                    temperature=request.temperature or 0.7
+                    temperature=request.temperature or 0.1
                 ),
                 timeout=self.timeout
             )

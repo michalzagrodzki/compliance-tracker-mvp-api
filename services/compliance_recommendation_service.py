@@ -295,63 +295,6 @@ class ComplianceRecommendationService:
         
         return prompt
 
-    def _build_domain_recommendation_prompt(
-        self, 
-        compliance_domain: str, 
-        gaps: List[ComplianceGap],
-        focus_area: Optional[str] = None
-    ) -> str:
-        """Build prompt for domain-level recommendations."""
-        
-        # Analyze gap patterns
-        gap_types = {}
-        risk_levels = {}
-        categories = {}
-        
-        for gap in gaps:
-            gap_types[gap.gap_type] = gap_types.get(gap.gap_type, 0) + 1
-            risk_levels[gap.risk_level] = risk_levels.get(gap.risk_level, 0) + 1
-            categories[gap.gap_category] = categories.get(gap.gap_category, 0) + 1
-        
-        prompt = f"""
-        As a senior compliance consultant, analyze the current {compliance_domain} compliance posture and provide strategic recommendations.
-
-        **Current Gap Analysis:**
-        - Total Gaps: {len(gaps)}
-        - Gap Types: {dict(gap_types)}
-        - Risk Levels: {dict(risk_levels)}
-        - Categories: {dict(categories)}
-        
-        **Individual Gaps Summary:**
-        """
-        
-        for i, gap in enumerate(gaps[:10], 1):  # Limit to top 10 gaps
-            prompt += f"\n{i}. {gap.gap_title} ({gap.risk_level} risk, {gap.gap_category})"
-        
-        if len(gaps) > 10:
-            prompt += f"\n... and {len(gaps) - 10} more gaps"
-        
-        if focus_area:
-            prompt += f"\n\n**Focus Area:** {focus_area}"
-        
-        prompt += f"""
-        
-        **Request:**
-        Provide strategic recommendations for improving {compliance_domain} compliance that include:
-        1. Overall compliance posture assessment
-        2. Priority areas for improvement
-        3. Strategic recommendations (top 5)
-        4. Resource allocation guidance
-        5. Implementation roadmap
-        6. Success metrics and KPIs
-        7. Risk mitigation priorities
-        8. Long-term compliance strategy
-        
-        Focus on systemic improvements that address root causes rather than individual gaps.
-        """
-        
-        return prompt
-
     def _build_remediation_plan_prompt(
         self, 
         gaps: List[ComplianceGap], 

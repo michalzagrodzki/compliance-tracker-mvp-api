@@ -204,7 +204,7 @@ class AIService:
                 prompt=prompt.strip(),
                 context=context,
                 model=model,
-                temperature=0.3  # Lower temperature for structured responses
+                temperature=0.1  # Lower temperature for structured responses
             )
             
             # Check cache first
