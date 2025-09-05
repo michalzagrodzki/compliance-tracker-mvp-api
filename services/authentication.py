@@ -219,45 +219,6 @@ def get_current_active_user(current_user: UserResponse = Depends(get_current_use
         )
     return current_user
 
-def require_admin(current_user: UserResponse = Depends(get_current_active_user)) -> UserResponse:
-    if not settings.is_admin_role(current_user.role):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
-    return current_user
-
-def require_compliance_officer_or_admin(current_user: UserResponse = Depends(get_current_active_user)) -> UserResponse:
-    if not settings.has_elevated_permissions(current_user.role):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Compliance officer or admin access required"
-        )
-    return current_user
-
-def require_compliance_domain_access(domain: str):
-    def check_domain_access(current_user: UserResponse = Depends(get_current_active_user)) -> UserResponse:
-        if settings.is_admin_role(current_user.role):
-            return current_user  # Admins have access to all domains
-        
-        if domain not in current_user.compliance_domains:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied to compliance domain: {domain}"
-            )
-        return current_user
-    
-    return check_domain_access
-
-def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))) -> Optional[UserResponse]:
-    if credentials is None:
-        return None
-    
-    try:
-        return auth_service.get_current_user(credentials.credentials)
-    except HTTPException:
-        return None
-
 def _extract_access_token(request: Request) -> Optional[str]:
     auth = request.headers.get("authorization") or request.headers.get("Authorization")
     if auth and auth.lower().startswith("bearer "):

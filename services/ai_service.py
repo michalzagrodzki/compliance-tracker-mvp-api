@@ -271,74 +271,6 @@ class AIService:
                 context={"error": str(e)}
             )
 
-    async def analyze_text_sentiment(self, text: str, user_id: Optional[str] = None) -> Dict[str, Any]:
-        """Analyze sentiment of text."""
-        prompt = f"""
-        Analyze the sentiment of the following text and provide a structured response.
-        
-        Text: "{text}"
-        
-        Provide sentiment analysis including:
-        - Overall sentiment (positive, negative, neutral)
-        - Confidence score (0.0 to 1.0)
-        - Key emotional indicators
-        """
-        
-        schema = {
-            "type": "object",
-            "properties": {
-                "sentiment": {
-                    "type": "string",
-                    "enum": ["positive", "negative", "neutral"]
-                },
-                "confidence_score": {
-                    "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0
-                },
-                "emotional_indicators": {
-                    "type": "array",
-                    "items": {"type": "string"}
-                }
-            },
-            "required": ["sentiment", "confidence_score"]
-        }
-        
-        return await self.generate_structured_response(
-            prompt=prompt,
-            response_schema=schema,
-            user_id=user_id
-        )
-
-    async def summarize_text(
-        self, 
-        text: str, 
-        max_length: int = 200, 
-        user_id: Optional[str] = None
-    ) -> str:
-        """Generate a summary of text."""
-        prompt = f"""
-        Provide a concise summary of the following text in approximately {max_length} characters.
-        
-        Text: "{text}"
-        
-        Summary:
-        """
-        
-        context = {
-            "role": "text summarizer",
-            "instructions": f"Provide a clear, concise summary in approximately {max_length} characters."
-        }
-        
-        response = await self.generate_text(
-            prompt=prompt,
-            context=context,
-            max_tokens=max_length // 3,  # Rough token estimate
-            user_id=user_id
-        )
-        
-        return response.content.strip()
-
     def _check_rate_limit(self) -> None:
         """Check if rate limiting should be applied."""
         # Simple rate limiting: max 100 requests per minute
@@ -385,23 +317,6 @@ class AIService:
                     logger.warning(f"AI response field {field} should be number but got {type(value)}")
                 elif expected_type == "array" and not isinstance(value, list):
                     logger.warning(f"AI response field {field} should be array but got {type(value)}")
-
-    def get_cache_stats(self) -> Dict[str, Any]:
-        """Get cache statistics."""
-        if not self.cache:
-            return {"cache_enabled": False}
-        
-        return {
-            "cache_enabled": True,
-            "cache_size": self.cache.size(),
-            "ttl_minutes": self.cache.ttl_minutes
-        }
-
-    def clear_cache(self) -> None:
-        """Clear AI response cache."""
-        if self.cache:
-            self.cache.clear()
-            logger.info("AI service cache cleared")
 
     def is_healthy(self) -> bool:
         """Check if AI service is healthy."""

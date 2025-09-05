@@ -36,6 +36,9 @@ class ComplianceRecommendationService:
         self.gap_repository = compliance_gap_repository
         self.user_repository = user_repository
 
+    """
+    TODO: Require additional arguments, chat history, documents
+    """
     async def generate_gap_recommendation(
         self, 
         gap_id: str, 
@@ -131,99 +134,6 @@ class ComplianceRecommendationService:
                 detail="Failed to generate compliance recommendation",
                 error_code="COMPLIANCE_RECOMMENDATION_FAILED",
                 context={"gap_id": gap_id}
-            )
-
-    async def generate_remediation_plan(
-        self, 
-        gap_ids: List[str], 
-        user_id: str,
-        timeline_weeks: int = 12,
-        resource_constraints: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """Generate a comprehensive remediation plan for multiple gaps."""
-        try:
-            # Validate user
-            user = await self.user_repository.get_by_id(user_id)
-            if not user:
-                raise ValidationException(
-                    detail="Invalid user",
-                    field="user_id",
-                    value=user_id
-                )
-            
-            # Get all gaps and validate access
-            gaps = []
-            for gap_id in gap_ids:
-                gap = await self.gap_repository.get_by_id(gap_id)
-                if not gap:
-                    continue
-                
-                # Check domain access
-                if not (user.is_admin() or user.can_access_domain(gap.compliance_domain)):
-                    continue
-                
-                gaps.append(gap)
-            
-            if not gaps:
-                raise ValidationException(
-                    detail="No accessible gaps found",
-                    field="gap_ids",
-                    value=gap_ids
-                )
-            
-            # Build remediation plan prompt
-            prompt = self._build_remediation_plan_prompt(gaps, timeline_weeks, resource_constraints)
-            
-            # Generate remediation plan
-            ai_context = {
-                "role": "compliance project manager and consultant",
-                "instructions": "Create a detailed, realistic remediation plan with proper sequencing and resource allocation."
-            }
-            
-            plan_data = await self.ai_service.generate_structured_response(
-                prompt=prompt,
-                response_schema=self._get_remediation_plan_schema(),
-                context=ai_context,
-                model="gpt-4",
-                user_id=user_id
-            )
-            
-            # Enhance with gap details
-            plan_data["gaps_included"] = [
-                {
-                    "id": gap.id,
-                    "title": gap.gap_title,
-                    "risk_level": gap.risk_level,
-                    "compliance_domain": gap.compliance_domain,
-                    "regulatory": gap.regulatory_requirement
-                }
-                for gap in gaps
-            ]
-            
-            # Log business event
-            log_business_event(
-                event_type="REMEDIATION_PLAN_GENERATED",
-                entity_type="remediation_plan",
-                entity_id="multi_gap_plan",
-                action="generate",
-                user_id=user_id,
-                details={
-                    "gap_count": len(gaps),
-                    "timeline_weeks": timeline_weeks,
-                    "domains": list(set(gap.compliance_domain for gap in gaps))
-                }
-            )
-            
-            return plan_data
-            
-        except (ValidationException, AuthorizationException):
-            raise
-        except Exception as e:
-            logger.error(f"Failed to generate remediation plan: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to generate remediation plan",
-                error_code="REMEDIATION_PLAN_FAILED",
-                context={"gap_count": len(gap_ids)}
             )
 
     def _build_recommendation_prompt(
@@ -559,17 +469,6 @@ class ComplianceRecommendationService:
             enhanced["potential_fine_amount"] = float(gap.potential_fine_amount)
         
         return enhanced
-
-    def _risk_level_value(self, risk_level: RiskLevel) -> int:
-        """Convert risk level to numeric value for comparison."""
-        risk_values = {
-            RiskLevel.LOW: 1,
-            RiskLevel.MEDIUM: 2,
-            RiskLevel.HIGH: 3,
-            RiskLevel.CRITICAL: 4
-        }
-        return risk_values.get(risk_level, 0)
-
 
 # Factory function
 def create_compliance_recommendation_service(

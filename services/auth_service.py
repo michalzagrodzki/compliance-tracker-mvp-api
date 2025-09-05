@@ -202,33 +202,6 @@ class AuthService:
             # Don't fail logout completely if there's an error
             return {"message": "Logout completed", "note": "Session may already be invalid"}
 
-    async def get_user_profile(self, user_id: str) -> Optional[User]:
-        """Get user profile by ID."""
-        try:
-            return await self.user_repository.get_by_id(user_id)
-        except Exception as e:
-            logger.error(f"Failed to get user profile {user_id}: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to retrieve user profile",
-                error_code="USER_PROFILE_RETRIEVAL_FAILED",
-                context={"user_id": user_id}
-            )
-
-    async def update_user_profile(self, user_id: str, update_data: dict) -> Optional[User]:
-        """Update user profile information."""
-        try:
-            from entities.user import UserUpdate
-            user_update = UserUpdate(**update_data)
-            return await self.user_repository.update(user_id, user_update)
-        except Exception as e:
-            logger.error(f"Failed to update user profile {user_id}: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to update user profile",
-                error_code="USER_PROFILE_UPDATE_FAILED",
-                context={"user_id": user_id}
-            )
-
-
 # Create service instance (to be used with dependency injection)
 def create_auth_service(supabase_client: Client, user_repository: UserRepository) -> AuthService:
     """Factory function to create AuthService instance."""

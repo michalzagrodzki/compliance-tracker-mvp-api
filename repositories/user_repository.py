@@ -82,27 +82,6 @@ class UserRepository(SupabaseRepository[User]):
                 context={"user_id": user_id}
             )
 
-    async def get_by_email(self, email: str) -> Optional[User]:
-        """Retrieve a user by email address."""
-        try:
-            result = self.supabase.table(self.table_name)\
-                .select("*")\
-                .eq("email", email)\
-                .execute()
-            
-            if not result.data:
-                return None
-            
-            return User.from_dict(result.data[0])
-            
-        except Exception as e:
-            logger.error(f"Failed to get user by email {email}: {e}", exc_info=True)
-            raise BusinessLogicException(
-                detail="Failed to retrieve user",
-                error_code="USER_RETRIEVAL_FAILED",
-                context={"email": email}
-            )
-
     async def update(self, user_id: str, update_data: UserUpdate) -> Optional[User]:
         """Update a user by ID."""
         try:
@@ -232,11 +211,6 @@ class UserRepository(SupabaseRepository[User]):
                 error_code="USER_DOMAIN_RETRIEVAL_FAILED",
                 context={"domain": domain}
             )
-
-    async def get_active_users(self) -> List[User]:
-        """Get all active users."""
-        filters = UserFilter(is_active=True)
-        return await self.list(filters=filters)
 
     async def get_users_by_role(self, role: str) -> List[User]:
         """Get all users with a specific role."""

@@ -532,7 +532,6 @@ class FileUploadValidator:
             logger.error(f"Unexpected upload validation error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Upload validation failed")
 
-    
     def _get_client_ip(self, request: Request) -> str:
         forwarded_for = request.headers.get("X-Forwarded-For")
         if forwarded_for:

@@ -103,28 +103,6 @@ def get_user_by_id(user_id: str) -> Dict[str, Any]:
                 logger.error(f"Failed to fetch user {user_id} after retries", exc_info=True)
                 raise HTTPException(status_code=503, detail="Temporary database read error, please retry")
 
-def get_user_by_email(email: str) -> Dict[str, Any]:
-    try:
-        logger.info(f"Fetching user with email: {email}")
-        resp = (
-            supabase
-            .table(settings.supabase_table_users)
-            .select("id, email, full_name, role, compliance_domains, is_active, created_at, updated_at")
-            .eq("email", email)
-            .execute()
-        )
-        
-        if not resp.data:
-            raise HTTPException(status_code=404, detail=f"User with email {email} not found")
-        
-        logger.info(f"Found user: {email}")
-        return resp.data[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to fetch user {email}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
 def update_user(user_id: str, user_update: UserUpdate, updated_by: str) -> Dict[str, Any]:
     try:
         logger.info(f"Updating user {user_id}")

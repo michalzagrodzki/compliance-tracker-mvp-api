@@ -45,18 +45,6 @@ class User(BaseModel):
         # Use enum values for serialization
         use_enum_values = True
 
-    def has_compliance_access(self, domains: List[str]) -> bool:
-        """Check if user has access to any of the specified compliance domains."""
-        return any(domain in self.compliance_domains for domain in domains)
-
-    def has_all_compliance_access(self, domains: List[str]) -> bool:
-        """Check if user has access to all specified compliance domains."""
-        return all(domain in self.compliance_domains for domain in domains)
-
-    def has_role_access(self, allowed_roles: List[str]) -> bool:
-        """Check if user's role is in the list of allowed roles."""
-        return self.role.value in allowed_roles
-
     def is_admin(self) -> bool:
         """Check if user has admin role."""
         return self.role == UserRole.ADMIN
@@ -80,18 +68,6 @@ class User(BaseModel):
         self.is_active = False
         self.status = UserStatus.INACTIVE
         self.updated_at = datetime.utcnow()
-
-    def suspend(self) -> None:
-        """Suspend the user account."""
-        self.is_active = False
-        self.status = UserStatus.SUSPENDED
-        self.updated_at = datetime.utcnow()
-
-    def add_compliance_domain(self, domain: str) -> None:
-        """Add a compliance domain to the user."""
-        if domain not in self.compliance_domains:
-            self.compliance_domains.append(domain)
-            self.updated_at = datetime.utcnow()
 
     def remove_compliance_domain(self, domain: str) -> None:
         """Remove a compliance domain from the user."""

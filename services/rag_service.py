@@ -284,10 +284,6 @@ class RAGService:
             
             # Yield metadata first
             source_document_ids = [match.id for match in search_response.matches]
-            logger.info("----------------------------------------------------")
-            logger.info(search_response)
-            logger.info(source_document_ids)
-            logger.info("----------------------------------------------------")
             metadata = self._build_query_metadata(
                 search_response.matches,
                 compliance_domain,

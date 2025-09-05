@@ -50,11 +50,6 @@ class BaseEmbeddingAdapter(ABC):
         pass
 
     @abstractmethod
-    async def generate_batch_embeddings(self, requests: List[EmbeddingRequest]) -> List[EmbeddingResponse]:
-        """Generate embeddings for multiple texts."""
-        pass
-
-    @abstractmethod
     def is_healthy(self) -> bool:
         """Check if the embedding service is healthy."""
         pass
@@ -194,105 +189,6 @@ class OpenAIEmbeddingAdapter(BaseEmbeddingAdapter):
                     service_name="OpenAI",
                     context={"error": str(e)}
                 )
-
-    async def generate_batch_embeddings(self, requests: List[EmbeddingRequest]) -> List[EmbeddingResponse]:
-        """Generate embeddings for multiple texts using OpenAI API."""
-        import uuid
-        
-        if not requests:
-            return []
-        
-        start_time = time.time()
-        request_id = str(uuid.uuid4())
-        
-        try:
-            # Validate all requests
-            texts = []
-            for i, request in enumerate(requests):
-                if not request.text or not request.text.strip():
-                    raise ValidationException(
-                        detail=f"Text at index {i} cannot be empty",
-                        field=f"requests[{i}].text",
-                        value=request.text
-                    )
-                texts.append(request.text.strip())
-            
-            # Use model from first request or default
-            model = requests[0].model or self.default_model
-            
-            logger.debug(f"Making OpenAI batch embedding API call with model: {model}, batch_size: {len(texts)}")
-            
-            # Call OpenAI API with batch
-            response = await asyncio.wait_for(
-                self._client.embeddings.create(
-                    model=model,
-                    input=texts
-                ),
-                timeout=self.timeout * max(1, len(texts))  # basic scaling with batch size
-            )
-            
-            # Extract response data
-            response_time_ms = (time.time() - start_time) * 1000
-            
-            # Create response objects
-            embedding_responses = []
-            for i, data in enumerate(response.data):
-                embedding_response = EmbeddingResponse(
-                    embedding=data.embedding,
-                    model_used=response.model,
-                    token_count=(getattr(getattr(response, "usage", None), "total_tokens", 0) or 0) // max(1, len(response.data)),
-                    response_time_ms=response_time_ms,
-                    request_id=f"{request_id}-{i}",
-                    metadata={
-                        "batch_index": i,
-                        "batch_size": len(texts),
-                        "text_length": len(texts[i]),
-                        "embedding_dimensions": len(data.embedding),
-                        "total_batch_tokens": getattr(getattr(response, "usage", None), "total_tokens", 0) or 0
-                    },
-                    created_at=datetime.utcnow()
-                )
-                embedding_responses.append(embedding_response)
-            
-            # Log performance
-            log_performance(
-                operation="openai_batch_embedding_generation",
-                duration_ms=response_time_ms,
-                success=True,
-                token_count=getattr(getattr(response, "usage", None), "total_tokens", 0) or 0,
-                item_count=len(texts)
-            )
-            
-            logger.info(f"OpenAI batch embedding generation completed: {len(texts)} texts, {response.usage.total_tokens} tokens, {response_time_ms:.0f}ms")
-            return embedding_responses
-            
-        except asyncio.TimeoutError:
-            duration_ms = (time.time() - start_time) * 1000
-            log_performance(
-                operation="openai_batch_embedding_generation",
-                duration_ms=duration_ms,
-                success=False,
-                error="timeout"
-            )
-            raise ExternalServiceException(
-                detail="OpenAI batch embedding API request timed out",
-                service_name="OpenAI",
-                context={"timeout_seconds": self.timeout, "batch_size": len(requests)}
-            )
-        except Exception as e:
-            duration_ms = (time.time() - start_time) * 1000
-            log_performance(
-                operation="openai_batch_embedding_generation",
-                duration_ms=duration_ms,
-                success=False,
-                error=str(e)
-            )
-            logger.error(f"OpenAI batch embedding API call failed: {e}", exc_info=True)
-            raise ExternalServiceException(
-                detail="OpenAI batch embedding API request failed",
-                service_name="OpenAI",
-                context={"error": str(e), "batch_size": len(requests)}
-            )
 
     def is_healthy(self) -> bool:
         """Check if OpenAI embedding service is healthy."""

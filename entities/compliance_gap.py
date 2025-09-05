@@ -144,21 +144,9 @@ class ComplianceGap(BaseModel):
             return GapType(v)
         return v
 
-    def is_critical(self) -> bool:
-        """Check if the gap has critical risk level."""
-        return self.risk_level == RiskLevel.CRITICAL
-
-    def is_regulatory(self) -> bool:
-        """Check if the gap is a regulatory requirement."""
-        return self.regulatory_requirement
-
     def is_resolved(self) -> bool:
         """Check if the gap has been resolved."""
         return self.status == GapStatus.RESOLVED
-
-    def is_assigned(self) -> bool:
-        """Check if the gap is assigned to someone."""
-        return self.assigned_to is not None
 
     def is_overdue(self) -> bool:
         """Check if the gap is overdue (has due date in the past and not resolved)."""
@@ -177,23 +165,6 @@ class ComplianceGap(BaseModel):
             self.acknowledged_at = datetime.now(timezone.utc)
             self.updated_at = datetime.now(timezone.utc)
 
-    def assign_to(self, user_id: str, due_date: Optional[datetime] = None) -> None:
-        """Assign the gap to a user."""
-        self.assigned_to = user_id
-        if due_date:
-            self.due_date = due_date
-        self.updated_at = datetime.now(timezone.utc)
-        
-        # If gap was just identified, acknowledge it
-        if self.status == GapStatus.IDENTIFIED:
-            self.acknowledge(user_id)
-
-    def start_resolution(self) -> None:
-        """Mark the gap as being worked on."""
-        if self.status in [GapStatus.IDENTIFIED, GapStatus.ACKNOWLEDGED]:
-            self.status = GapStatus.IN_PROGRESS
-            self.updated_at = datetime.now(timezone.utc)
-
     def resolve(self, resolution_notes: Optional[str] = None) -> None:
         """Mark the gap as resolved."""
         self.status = GapStatus.RESOLVED
@@ -210,35 +181,9 @@ class ComplianceGap(BaseModel):
         if notes:
             self.resolution_notes = notes
 
-    def accept_risk(self, notes: Optional[str] = None) -> None:
-        """Accept the risk and close the gap."""
-        self.status = GapStatus.ACCEPTED_RISK
-        self.resolved_at = datetime.now(timezone.utc)
-        self.updated_at = datetime.now(timezone.utc)
-        if notes:
-            self.resolution_notes = notes
-
     def review(self, reviewer_id: str) -> None:
         """Mark the gap as reviewed."""
         self.last_reviewed_at = datetime.now(timezone.utc)
-        self.updated_at = datetime.now(timezone.utc)
-
-    def update_risk_assessment(self, risk_level: RiskLevel, business_impact: BusinessImpact, 
-                              potential_fine: Optional[Decimal] = None) -> None:
-        """Update risk assessment."""
-        self.risk_level = risk_level
-        self.business_impact = business_impact
-        if potential_fine is not None:
-            self.potential_fine_amount = potential_fine
-        self.updated_at = datetime.now(timezone.utc)
-
-    def add_recommendation(self, recommendation_type: str, recommendation_text: str, 
-                          recommended_actions: Optional[List[str]] = None) -> None:
-        """Add or update recommendations."""
-        self.recommendation_type = recommendation_type
-        self.recommendation_text = recommendation_text
-        if recommended_actions:
-            self.recommended_actions = recommended_actions
         self.updated_at = datetime.now(timezone.utc)
 
     def get_age_in_days(self) -> int:
@@ -248,18 +193,6 @@ class ComplianceGap(BaseModel):
         if detected.tzinfo is None:
             detected = detected.replace(tzinfo=timezone.utc)
         return (now - detected).days
-
-    def get_resolution_time_days(self) -> Optional[int]:
-        """Get resolution time in days if resolved."""
-        if self.resolved_at:
-            detected = self.detected_at
-            resolved = self.resolved_at
-            if detected.tzinfo is None:
-                detected = detected.replace(tzinfo=timezone.utc)
-            if resolved.tzinfo is None:
-                resolved = resolved.replace(tzinfo=timezone.utc)
-            return (resolved - detected).days
-        return None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert gap to dictionary for database storage."""

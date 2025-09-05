@@ -233,27 +233,6 @@ class IngestionService:
         )
         return [i.to_dict() for i in items]
 
-    async def get_pdf_ingestions_by_user(
-        self, user_id: str, skip: int = 0, limit: int = 10
-    ) -> List[Dict[str, Any]]:
-        items = await self.ingestion_repo.list_by_user(user_id=user_id, skip=skip, limit=limit)
-        return [i.to_dict() for i in items]
-
-    async def get_pdf_ingestions_by_version(
-        self,
-        document_version: str,
-        skip: int = 0,
-        limit: int = 10,
-        exact_match: bool = False,
-    ) -> List[Dict[str, Any]]:
-        items = await self.ingestion_repo.list_by_version(
-            document_version=document_version,
-            skip=skip,
-            limit=limit,
-            exact_match=exact_match,
-        )
-        return [i.to_dict() for i in items]
-
     async def search_pdf_ingestions(
         self,
         compliance_domain: Optional[str] = None,
@@ -281,17 +260,6 @@ class IngestionService:
         )
         items = await self.list(skip=skip, limit=limit, filters=filters)
         return [i.to_dict() for i in items]
-
-    async def delete_pdf_ingestion(self, ingestion_id: str, soft_delete: bool = True) -> Dict[str, Any]:
-        if soft_delete:
-            item = await self.soft_delete(ingestion_id)
-            return item.to_dict()
-        else:
-            ok = await self.ingestion_repo.delete(ingestion_id)
-            if not ok:
-                raise ResourceNotFoundException(resource_type="PdfIngestion", resource_id=ingestion_id)
-            return {"message": f"PDF ingestion {ingestion_id} permanently deleted"}
-
 
 def create_ingestion_service(repo: PdfIngestionRepository, user_repo: UserRepository) -> IngestionService:
     return IngestionService(repo, user_repo)

@@ -21,16 +21,7 @@ class ValidatedUser(AuthenticatedUser):
         self.created_at = user_data.get("created_at")
         self.updated_at = user_data.get("updated_at")
         self.is_active = user_data.get("is_active", False)
-    
-    def has_compliance_access(self, domains: List[str]) -> bool:
-        return any(domain in self.compliance_domains for domain in domains)
-    
-    def has_all_compliance_access(self, domains: List[str]) -> bool:
-        return all(domain in self.compliance_domains for domain in domains)
-    
-    def has_role_access(self, allowed_roles: List[str]) -> bool:
-        return self.role in allowed_roles
-    
+
 class UserSignup(BaseModel):
     email: EmailStr
     password: str

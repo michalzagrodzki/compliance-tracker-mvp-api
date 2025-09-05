@@ -6,7 +6,6 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field, validator
 
-
 class AuditSession(BaseModel):
     """
     Audit Session entity representing a compliance audit session.
@@ -65,26 +64,6 @@ class AuditSession(BaseModel):
                 data[field] = data[field].isoformat()
         
         return data
-
-    def is_expired(self, max_duration_hours: int = 24) -> bool:
-        """Check if audit session has expired based on start time."""
-        if not self.is_active:
-            return True
-        
-        now = datetime.utcnow()
-        duration = now - self.started_at
-        return duration.total_seconds() > (max_duration_hours * 3600)
-
-    def get_duration_minutes(self) -> Optional[int]:
-        """Get session duration in minutes."""
-        if self.ended_at:
-            duration = self.ended_at - self.started_at
-            return int(duration.total_seconds() / 60)
-        elif self.is_active:
-            duration = datetime.utcnow() - self.started_at
-            return int(duration.total_seconds() / 60)
-        return None
-
 
 class AuditSessionCreate(BaseModel):
     """
