@@ -3,7 +3,7 @@ Middleware for error handling, logging, and request tracking.
 """
 from fastapi import Request, Response, HTTPException
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp
 from pydantic import ValidationError
 
@@ -25,12 +25,31 @@ class RequestTrackingMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.logger = get_logger("middleware")
 
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """Pass-through middleware; can be extended to add correlation IDs/logging."""
+        # Minimal viable tracking; avoid changing behavior unexpectedly
+        response = await call_next(request)
+        return response
+
 class ErrorHandlingMiddleware(BaseHTTPMiddleware):
     """Middleware for centralized error handling and response formatting."""
     
     def __init__(self, app: ASGIApp):
         super().__init__(app)
         self.logger = get_logger("error_handler")
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """Wrap downstream processing with consistent error handling."""
+        try:
+            return await call_next(request)
+        except BaseRAGException as e:
+            return self._handle_rag_exception(e, request)
+        except HTTPException as e:
+            return self._handle_http_exception(e, request)
+        except ValidationError as e:
+            return self._handle_validation_error(e, request)
+        except Exception as e:  # noqa: F841
+            return self._handle_unexpected_error(e, request)
     
     def _handle_rag_exception(self, error: BaseRAGException, request: Request) -> JSONResponse:
         """Handle custom RAG exceptions."""
@@ -154,6 +173,25 @@ class SecurityMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp):
         super().__init__(app)
         self.logger = get_logger("security")
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """Run basic request checks and attach security headers to responses."""
+        try:
+            await self._check_request_security(request)
+        except Exception:
+            # Do not block request on security logging errors
+            pass
+
+        response = await call_next(request)
+
+        # Apply lighter headers for docs
+        path = str(request.url.path)
+        if path.startswith("/docs") or path.startswith("/redoc") or path.startswith("/openapi"):
+            self._add_basic_security_headers(response)
+        else:
+            self._add_security_headers(response)
+
+        return response
     
     async def _check_request_security(self, request: Request) -> None:
         """Perform basic security checks on the request."""

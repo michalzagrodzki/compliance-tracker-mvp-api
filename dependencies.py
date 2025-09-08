@@ -207,7 +207,10 @@ def get_compliance_recommendation_service() -> ComplianceRecommendationService:
     ai_service = get_ai_service()
     gap_repo = get_compliance_gap_repository()
     user_repo = get_user_repository()
-    return create_compliance_recommendation_service(ai_service, gap_repo, user_repo)
+    chat_history_repo = get_chat_history_repository()
+    return create_compliance_recommendation_service(
+        ai_service, gap_repo, user_repo, chat_history_repo
+    )
 
 
 @lru_cache()

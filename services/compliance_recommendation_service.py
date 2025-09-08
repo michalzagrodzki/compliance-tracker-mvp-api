@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from entities.compliance_gap import ComplianceGap, RiskLevel
 from repositories.compliance_gap_repository import ComplianceGapRepository
 from repositories.user_repository import UserRepository
+from repositories.chat_history_repository import ChatHistoryRepository
 from services.ai_service import AIService
 from common.exceptions import (
     ResourceNotFoundException,
@@ -30,27 +31,27 @@ class ComplianceRecommendationService:
         self, 
         ai_service: AIService, 
         compliance_gap_repository: ComplianceGapRepository,
-        user_repository: UserRepository
+        user_repository: UserRepository,
+        chat_history_repository: Optional[ChatHistoryRepository] = None,
     ):
         self.ai_service = ai_service
         self.gap_repository = compliance_gap_repository
         self.user_repository = user_repository
+        self.chat_history_repository = chat_history_repository
 
-    """
-    TODO: Require additional arguments, chat history, documents
-    """
     async def generate_gap_recommendation(
-        self, 
-        gap_id: str, 
+        self,
+        gap_id: str,
         user_id: str,
         recommendation_type: str = "comprehensive",
-        include_implementation_plan: bool = True
+        include_implementation_plan: bool = True,
+        include_citations: bool = True,
+        max_chat_docs: int = 5,
     ) -> Dict[str, Any]:
-        """Generate AI-powered recommendation for a specific compliance gap."""
         try:
-            import time
+            import time, json
             start_time = time.time()
-            
+
             # Validate user and get gap with access control
             user = await self.user_repository.get_by_id(user_id)
             if not user or not user.is_active:
@@ -59,47 +60,105 @@ class ComplianceRecommendationService:
                     field="user_id",
                     value=user_id
                 )
-            
-            # Get the compliance gap
+
             gap = await self.gap_repository.get_by_id(gap_id)
             if not gap:
                 raise ResourceNotFoundException(
                     resource_type="ComplianceGap",
                     resource_id=gap_id
                 )
-            
-            # Check user access to compliance domain
+
             if not (user.is_admin() or user.can_access_domain(gap.compliance_domain)):
                 raise AuthorizationException(
                     detail=f"Access denied to compliance domain: {gap.compliance_domain}",
                     error_code="DOMAIN_ACCESS_DENIED"
                 )
-            
-            # Build recommendation prompt
-            prompt = self._build_recommendation_prompt(gap, recommendation_type, include_implementation_plan)
-            
-            # Define response schema
+
+            # Attempt to enrich with chat history context
+            chat_item = None
+            chat_citations: List[Dict[str, Any]] = []
+            source_document_ids: List[str] = []
+            question: Optional[str] = None
+            prior_answer: Optional[str] = None
+
+            if getattr(gap, "chat_history_id", None) and self.chat_history_repository:
+                try:
+                    chat_id_int = int(str(gap.chat_history_id))
+                    chat_item = await self.chat_history_repository.get_by_id(chat_id_int)
+                except Exception:
+                    chat_item = None
+
+            if chat_item:
+                question = getattr(chat_item, "question", None)
+                prior_answer = getattr(chat_item, "answer", None)
+                source_document_ids = list(getattr(chat_item, "source_document_ids", []) or [])
+
+                # Metadata may be dict or JSON string; normalize to dict
+                raw_meta = getattr(chat_item, "metadata", {})
+                if isinstance(raw_meta, str):
+                    try:
+                        raw_meta = json.loads(raw_meta)
+                    except Exception:
+                        raw_meta = {}
+
+                doc_details = []
+                try:
+                    doc_details = list(raw_meta.get("document_details", []) or [])
+                except Exception:
+                    doc_details = []
+
+                # Build top-N citations list
+                if doc_details:
+                    for i, d in enumerate(doc_details[: max(1, max_chat_docs) ]):
+                        chat_citations.append({
+                            "index": i + 1,
+                            "title": d.get("title"),
+                            "source_filename": d.get("source_filename"),
+                            "source_page_number": d.get("source_page_number"),
+                            "similarity": d.get("similarity"),
+                            "document_id": d.get("document_id"),
+                            "document_tags": d.get("document_tags"),
+                        })
+
+            # Build improved recommendation prompt (with optional chat/doc context)
+            prompt = self._build_recommendation_prompt_v2(
+                gap=gap,
+                recommendation_type=recommendation_type,
+                include_implementation_plan=include_implementation_plan,
+                question=question,
+                prior_answer=prior_answer,
+                citations=chat_citations if include_citations else [],
+                source_document_ids=source_document_ids,
+            )
+
             response_schema = self._get_recommendation_schema(include_implementation_plan)
-            
-            # Generate AI recommendation
+
             ai_context = {
                 "role": "compliance expert and consultant",
                 "domain": gap.compliance_domain,
-                "instructions": f"Provide practical, actionable recommendations for {gap.compliance_domain} compliance."
+                "instructions": (
+                    "Provide practical, actionable, and evidence-grounded recommendations. "
+                    "Cite provided sources in the Markdown text when appropriate."
+                ),
             }
-            
+
             recommendation_data = await self.ai_service.generate_structured_response(
                 prompt=prompt,
                 response_schema=response_schema,
                 context=ai_context,
-                model="gpt-4",  # Use GPT-4 for better compliance reasoning
-                user_id=user_id
+                model="gpt-4",
+                user_id=user_id,
             )
-            
-            # Enhance recommendation with gap context
-            enhanced_recommendation = self._enhance_recommendation(recommendation_data, gap)
-            
-            # Log business event
+
+            enhanced = self._enhance_recommendation(recommendation_data, gap)
+            # Attach evidence context for downstream consumers
+            if source_document_ids:
+                enhanced["source_document_ids_used"] = source_document_ids
+            if chat_citations:
+                enhanced["citations"] = chat_citations
+            if question:
+                enhanced["original_question"] = question
+
             log_business_event(
                 event_type="COMPLIANCE_RECOMMENDATION_GENERATED",
                 entity_type="compliance_gap",
@@ -111,36 +170,44 @@ class ComplianceRecommendationService:
                     "gap_type": gap.gap_type,
                     "risk_level": gap.risk_level,
                     "recommendation_type": recommendation_type,
-                    "includes_implementation": include_implementation_plan
-                }
+                    "includes_implementation": include_implementation_plan,
+                    "used_chat_context": bool(chat_item is not None),
+                    "source_docs_count": len(source_document_ids),
+                },
             )
-            
-            # Log performance
+
             duration_ms = (time.time() - start_time) * 1000
             log_performance(
-                operation="generate_compliance_recommendation",
+                operation="generate_compliance_recommendation_with_chat",
                 duration_ms=duration_ms,
                 success=True,
-                item_count=1
+                item_count=1,
             )
-            
-            return enhanced_recommendation
-            
+
+            return enhanced
+
         except (ValidationException, ResourceNotFoundException, AuthorizationException):
             raise
         except Exception as e:
-            logger.error(f"Failed to generate compliance recommendation for gap {gap_id}: {e}", exc_info=True)
+            logger.error(
+                f"Failed to generate compliance recommendation with chat for gap {gap_id}: {e}",
+                exc_info=True,
+            )
             raise BusinessLogicException(
                 detail="Failed to generate compliance recommendation",
                 error_code="COMPLIANCE_RECOMMENDATION_FAILED",
-                context={"gap_id": gap_id}
+                context={"gap_id": gap_id},
             )
 
     def _build_recommendation_prompt(
-        self, 
-        gap: ComplianceGap, 
+        self,
+        gap: ComplianceGap,
         recommendation_type: str,
-        include_implementation_plan: bool
+        include_implementation_plan: bool,
+        question: Optional[str] = None,
+        prior_answer: Optional[str] = None,
+        citations: Optional[List[Dict[str, Any]]] = None,
+        source_document_ids: Optional[List[str]] = None,
     ) -> str:
         """Build a rich, structured prompt for a gap-specific recommendation.
 
@@ -150,7 +217,7 @@ class ComplianceRecommendationService:
         """
 
         # Core gap context rendered first so the model can ground details
-        prompt = f"""
+        base_prompt = f"""
         You are a senior compliance consultant specializing in {gap.compliance_domain}.
         Create a comprehensive recommendation to address the following compliance gap.
 
@@ -176,16 +243,16 @@ class ComplianceRecommendationService:
         """
 
         if gap.potential_fine_amount:
-            prompt += f"\n- Potential Fine: ${gap.potential_fine_amount:,.2f}"
+            base_prompt += f"\n- Potential Fine: ${gap.potential_fine_amount:,.2f}"
 
         if gap.assigned_to:
-            prompt += f"\n- Assigned To: {gap.assigned_to}"
+            base_prompt += f"\n- Assigned To: {gap.assigned_to}"
 
         if gap.due_date:
-            prompt += f"\n- Due Date: {gap.due_date.strftime('%Y-%m-%d')}"
+            base_prompt += f"\n- Due Date: {gap.due_date.strftime('%Y-%m-%d')}"
 
         # Explicit output contract to drive length, structure, and depth
-        prompt += f"""
+        base_prompt += f"""
 
         Output Requirements
         - Audience: executive leadership and audit stakeholders.
@@ -265,56 +332,81 @@ class ComplianceRecommendationService:
         Ensure the structured fields are consistent with the Markdown document.
         """
 
-        return prompt
+        guidance = (
+            "\nAdditional Guidance\n"
+            "- If regulatory requirement text is not provided, avoid inventing specific clauses; "
+            "state assumptions and reference only provided sources.\n"
+        )
 
-    def _build_remediation_plan_prompt(
-        self, 
-        gaps: List[ComplianceGap], 
-        timeline_weeks: int,
-        resource_constraints: Optional[Dict[str, Any]] = None
+        parts: List[str] = [base_prompt, guidance]
+
+        # Inject chat context when present
+        if question or prior_answer:
+            parts.append("\nChat Context")
+            if question:
+                parts.append(f"- Original Question: {question}")
+            if prior_answer:
+                # Keep prior answer as context; the model should improve/expand on it
+                parts.append("- Prior AI Analysis:\n" + prior_answer)
+
+        # Inject document references as ground truth hints
+        if citations:
+            parts.append("\nDocument References (use these for citations):")
+            for c in citations:
+                idx = c.get("index")
+                title = c.get("title") or "Unknown"
+                filename = c.get("source_filename") or "Unknown"
+                page = c.get("source_page_number")
+                sim = c.get("similarity")
+                parts.append(
+                    f"[{idx}] {title} ({filename}{f', p. {page}' if page is not None else ''})"
+                    + (f" — similarity {sim:.3f}" if isinstance(sim, (int, float)) else "")
+                )
+
+            parts.append(
+                "\nCitation Instruction\n"
+                "- In `recommendation_text`, cite the above sources inline using [n] where appropriate.\n"
+                "- Do not cite sources not listed here.\n"
+            )
+
+        if source_document_ids:
+            parts.append(
+                "\nSource Document IDs (for grounding, not to output verbatim):\n"
+                + ", ".join(source_document_ids)
+            )
+
+        # Encourage explicit assumptions to reduce hallucinations
+        parts.append(
+            "\nAssumptions & Unknowns\n"
+            "- Where context is missing, list explicit assumptions and unknowns before proposing actions.\n"
+        )
+
+        return "\n".join(parts)
+
+    def _build_recommendation_prompt_v2(
+        self,
+        gap: ComplianceGap,
+        recommendation_type: str,
+        include_implementation_plan: bool,
+        question: Optional[str] = None,
+        prior_answer: Optional[str] = None,
+        citations: Optional[List[Dict[str, Any]]] = None,
+        source_document_ids: Optional[List[str]] = None,
     ) -> str:
-        """Build prompt for remediation plan."""
-        
-        prompt = f"""
-        Create a comprehensive remediation plan to address the following compliance gaps within {timeline_weeks} weeks:
-
-        **Gaps to Address:**
         """
-        
-        for i, gap in enumerate(gaps, 1):
-            prompt += f"""
-        {i}. {gap.gap_title}
-           - Risk: {gap.risk_level}
-           - Domain: {gap.compliance_domain}
-           - Category: {gap.gap_category}
-           - Regulatory: {gap.regulatory_requirement}
-           - Age: {gap.get_age_in_days()} days
+        Compatibility wrapper for improved prompt builder. Delegates to
+        `_build_recommendation_prompt` which now supports extended context.
         """
-        
-        if resource_constraints:
-            prompt += f"\n**Resource Constraints:**\n{resource_constraints}"
-        
-        prompt += f"""
-        
-        **Timeline:** {timeline_weeks} weeks
-
-        **Request:**
-        Create a detailed remediation plan that includes:
-        1. Phase breakdown (with timeline)
-        2. Task prioritization and sequencing
-        3. Resource requirements per phase
-        4. Dependencies and critical path
-        5. Milestones and deliverables
-        6. Risk mitigation during implementation
-        7. Success criteria and validation
-        8. Communication and stakeholder management
-        9. Contingency planning
-        
-        Prioritize regulatory requirements and high-risk items while considering practical implementation constraints.
-        """
-        
-        return prompt
-
+        return self._build_recommendation_prompt(
+            gap=gap,
+            recommendation_type=recommendation_type,
+            include_implementation_plan=include_implementation_plan,
+            question=question,
+            prior_answer=prior_answer,
+            citations=citations,
+            source_document_ids=source_document_ids,
+        )
+    
     def _get_recommendation_schema(self, include_implementation_plan: bool) -> Dict[str, Any]:
         """Get schema for gap recommendation response."""
         
@@ -395,62 +487,6 @@ class ComplianceRecommendationService:
             "required": required
         }
 
-    def _get_remediation_plan_schema(self) -> Dict[str, Any]:
-        """Get schema for remediation plan response."""
-        
-        return {
-            "type": "object",
-            "properties": {
-                "executive_summary": {
-                    "type": "string",
-                    "description": "High-level summary of the remediation plan"
-                },
-                "phases": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "phase_name": {"type": "string"},
-                            "duration_weeks": {"type": "number"},
-                            "objectives": {"type": "array", "items": {"type": "string"}},
-                            "tasks": {"type": "array", "items": {"type": "string"}},
-                            "deliverables": {"type": "array", "items": {"type": "string"}},
-                            "resources_needed": {"type": "array", "items": {"type": "string"}}
-                        }
-                    }
-                },
-                "critical_path": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Critical path items that could delay the project"
-                },
-                "milestones": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "milestone": {"type": "string"},
-                            "target_week": {"type": "number"},
-                            "success_criteria": {"type": "string"}
-                        }
-                    }
-                },
-                "risk_mitigation": {
-                    "type": "array",
-                    "items": {"type": "string"}
-                },
-                "total_estimated_effort": {
-                    "type": "string",
-                    "description": "Total estimated effort in person-weeks"
-                },
-                "success_criteria": {
-                    "type": "array",
-                    "items": {"type": "string"}
-                }
-            },
-            "required": ["executive_summary", "phases", "milestones", "total_estimated_effort"]
-        }
-
     def _enhance_recommendation(self, recommendation_data: Dict[str, Any], gap: ComplianceGap) -> Dict[str, Any]:
         """Enhance AI recommendation with gap context."""
         
@@ -474,7 +510,13 @@ class ComplianceRecommendationService:
 def create_compliance_recommendation_service(
     ai_service: AIService,
     compliance_gap_repository: ComplianceGapRepository,
-    user_repository: UserRepository
+    user_repository: UserRepository,
+    chat_history_repository: Optional[ChatHistoryRepository] = None,
 ) -> ComplianceRecommendationService:
     """Factory function to create ComplianceRecommendationService instance."""
-    return ComplianceRecommendationService(ai_service, compliance_gap_repository, user_repository)
+    return ComplianceRecommendationService(
+        ai_service,
+        compliance_gap_repository,
+        user_repository,
+        chat_history_repository,
+    )
