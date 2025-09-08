@@ -23,6 +23,7 @@ from services.ingestion_service import IngestionService, create_ingestion_servic
 from services.chat_history_service import ChatHistoryService, create_chat_history_service
 from services.ai_service import AIService, create_ai_service
 from services.compliance_recommendation_service import ComplianceRecommendationService, create_compliance_recommendation_service
+from services.compliance_domain import ComplianceDomainService, create_compliance_domain_service
 from services.iso_control_service import ISOControlService, create_iso_control_service
 from services.audit_log_service import AuditLogService, create_audit_log_service
 from services.audit_session_service import AuditSessionService, create_audit_session_service
@@ -165,6 +166,13 @@ def get_audit_report_version_service() -> AuditReportVersionService:
 
 
 @lru_cache()
+def get_compliance_domain_service() -> ComplianceDomainService:
+    """Get singleton ComplianceDomainService with dependencies."""
+    supabase = get_supabase_client()
+    return create_compliance_domain_service(supabase)
+
+
+@lru_cache()
 def get_pdf_ingestion_repository() -> PdfIngestionRepository:
     """Get singleton PdfIngestion repository."""
     supabase = get_supabase_client()
@@ -282,6 +290,7 @@ AuditSessionServiceDep = Annotated[AuditSessionService, Depends(get_audit_sessio
 AuditReportRepositoryDep = Annotated[AuditReportRepository, Depends(get_audit_report_repository)]
 AuditReportServiceDep = Annotated[AuditReportService, Depends(get_audit_report_service)]
 AuditReportVersionServiceDep = Annotated[AuditReportVersionService, Depends(get_audit_report_version_service)]
+ComplianceDomainServiceDep = Annotated[ComplianceDomainService, Depends(get_compliance_domain_service)]
 IngestionRepositoryDep = Annotated[PdfIngestionRepository, Depends(get_pdf_ingestion_repository)]
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 ChatHistoryRepositoryDep = Annotated[ChatHistoryRepository, Depends(get_chat_history_repository)]
