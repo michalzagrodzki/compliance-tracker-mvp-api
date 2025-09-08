@@ -10,16 +10,10 @@ from slowapi.util import get_remote_address
 from auth.decorators import ValidatedUser, authorize
 from security.endpoint_validator import compute_fingerprint, require_idempotency, store_idempotency, normalize_user_agent, ensure_json_request
 from security.input_validator import InputValidator, SecurityError
-from dependencies import AuditReportServiceDep
-from dependencies import AuditSessionServiceDep
-from dependencies import AuditLogServiceDep
+from dependencies import AuditReportServiceDep, AuditReportVersionServiceDep, AuditSessionServiceDep, AuditLogServiceDep
 from entities.audit_log import AuditLogCreate
 from common.exceptions import ValidationException, AuthorizationException, BusinessLogicException
 from common.logging import get_logger
-from services.audit_report_versions import (
-    create_audit_report_version,
-    serialize_uuids,
-)
 from policies.audit_reports import (
     ALLOWED_FIELDS_CREATE,
     ALLOWED_FIELDS_UPDATE,
@@ -105,6 +99,7 @@ async def create_new_audit_report(
     report_data: AuditReportCreate = Body(..., description="Audit report data"),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False),
     audit_report_service: AuditReportServiceDep = None,
+    audit_report_version_service: AuditReportVersionServiceDep = None,
     audit_session_service: AuditSessionServiceDep = None,
     audit_log_service: AuditLogServiceDep = None,
     current_user: ValidatedUser = None
@@ -195,16 +190,13 @@ async def create_new_audit_report(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error creating audit report: {str(e)}"
             )
-
-        serialized_report = serialize_uuids(created_report)
-
         try:
-            create_audit_report_version(
+            audit_report_version_service.create_version(
                 audit_report_id=created_report["id"],
                 changed_by=str(current_user.id),
                 change_description="Initial report creation",
                 change_type="draft_update",
-                report_snapshot=serialized_report
+                report_snapshot=created_report,
             )
         except Exception as e:
             logger.error(f"Error creating audit report version: {str(e)}", extra={
@@ -312,6 +304,7 @@ async def update_existing_audit_report(
     update_data: AuditReportUpdate = Body(..., description="Fields to update"),
     change_description: str = Body(..., description="Description of changes made", embed=True),
     audit_report_service: AuditReportServiceDep = None,
+    audit_report_version_service: AuditReportVersionServiceDep = None,
     current_user: ValidatedUser = None
 ) -> Dict[str, Any]:
     update_dict = update_data.model_dump(exclude_unset=True)
@@ -345,15 +338,20 @@ async def update_existing_audit_report(
     updated_report = await audit_report_service.update_report(report_id, update_dict, str(current_user.id))
 
     if update_dict:
-        serialized_report = serialize_uuids(updated_report)
-        create_audit_report_version(
-            audit_report_id=report_id,
-            changed_by=str(current_user.id),
-            change_description=change_description,
-            change_type="draft_update",
-            report_snapshot=serialized_report
-        )
-    
+        try:
+            audit_report_version_service.create_version(
+                audit_report_id=report_id,
+                changed_by=str(current_user.id),
+                change_description=change_description,
+                change_type="draft_update",
+                report_snapshot=updated_report,
+            )
+        except Exception as e:
+            logger.error(
+                f"Error creating audit report version for update: {str(e)}",
+                extra={"user_id": current_user.id, "audit_report_id": report_id},
+            )
+
     return updated_report
 
 @router.post("/recommendation/{audit_session_id}",

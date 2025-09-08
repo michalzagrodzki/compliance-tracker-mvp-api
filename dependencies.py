@@ -27,6 +27,10 @@ from services.iso_control_service import ISOControlService, create_iso_control_s
 from services.audit_log_service import AuditLogService, create_audit_log_service
 from services.audit_session_service import AuditSessionService, create_audit_session_service
 from services.audit_report_service import AuditReportService, create_audit_report_service
+from services.audit_report_versions import (
+    AuditReportVersionService,
+    create_audit_report_version_service,
+)
 from adapters.openai_adapter import OpenAIAdapter, MockAIAdapter
 from adapters.embedding_adapter import BaseEmbeddingAdapter, OpenAIEmbeddingAdapter
 from adapters.vector_search_adapter import BaseVectorSearchAdapter, SupabaseVectorSearchAdapter
@@ -154,6 +158,13 @@ def get_audit_report_service() -> AuditReportService:
 
 
 @lru_cache()
+def get_audit_report_version_service() -> AuditReportVersionService:
+    """Get singleton AuditReportVersionService with dependencies."""
+    supabase = get_supabase_client()
+    return create_audit_report_version_service(supabase)
+
+
+@lru_cache()
 def get_pdf_ingestion_repository() -> PdfIngestionRepository:
     """Get singleton PdfIngestion repository."""
     supabase = get_supabase_client()
@@ -270,6 +281,7 @@ AuditSessionRepositoryDep = Annotated[AuditSessionRepository, Depends(get_audit_
 AuditSessionServiceDep = Annotated[AuditSessionService, Depends(get_audit_session_service)]
 AuditReportRepositoryDep = Annotated[AuditReportRepository, Depends(get_audit_report_repository)]
 AuditReportServiceDep = Annotated[AuditReportService, Depends(get_audit_report_service)]
+AuditReportVersionServiceDep = Annotated[AuditReportVersionService, Depends(get_audit_report_version_service)]
 IngestionRepositoryDep = Annotated[PdfIngestionRepository, Depends(get_pdf_ingestion_repository)]
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 ChatHistoryRepositoryDep = Annotated[ChatHistoryRepository, Depends(get_chat_history_repository)]
