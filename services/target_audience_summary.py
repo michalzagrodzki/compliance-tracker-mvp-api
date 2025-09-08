@@ -65,13 +65,17 @@ class TargetAudienceSummaryService:
         self.api_key = api_key or settings.openai_api_key
         self.model = model or settings.openai_model
 
+    def get_audience_context(self, target_audience: str) -> Dict[str, str]:
+        """Expose audience context lookup via the service for DI consumers."""
+        return get_audience_context(target_audience)
+
     def generate_target_audience_summary(
         self,
         audit_report: Dict[str, Any],
         compliance_gaps: List[ComplianceGap],
     ) -> str:
         target_audience = audit_report.get('target_audience', 'compliance_team')
-        audience_context = get_audience_context(target_audience)
+        audience_context = self.get_audience_context(target_audience)
 
         # Build context from audit report
         audit_context = _build_audit_context(audit_report)

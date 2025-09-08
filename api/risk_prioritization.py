@@ -6,10 +6,7 @@ from slowapi.util import get_remote_address
 from auth.decorators import ValidatedUser, authorize
 from dependencies import AuditLogServiceDep, ControlRiskPrioritizationServiceDep
 from entities.audit_log import AuditLogCreate
-from services.control_risk_prioritization import (
-    ControlRiskPrioritizationResponse,
-)
-from services.schemas import ThreatIntelligenceRequest
+from services.schemas import ThreatIntelligenceRequest, ControlRiskPrioritizationResponse
 from config.config import settings
 
 router = APIRouter(prefix="/audit-reports/risk-prioritization", tags=["Audit Reports"])

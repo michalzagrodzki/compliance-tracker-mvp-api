@@ -665,6 +665,28 @@ class DetailedFindings(BaseModel):
     class Config:
         use_enum_values = True
 
+class ControlRiskPrioritizationResponse(BaseModel):
+    """Response model for control risk prioritization analysis"""
+    risk_prioritization_analysis: str = Field(description="Generated control risk prioritization analysis in markdown format")
+    audit_session_id: UUID
+    compliance_domain: str
+    total_gaps: int
+    high_risk_gaps: int
+    medium_risk_gaps: int
+    low_risk_gaps: int
+    regulatory_gaps: int
+    affected_control_families: int = Field(description="Number of ISO27001 control families affected by gaps")
+    certification_readiness_score: str = Field(description="ISO27001 certification readiness assessment (High/Medium-High/Medium/Low)")
+    estimated_investment_range: str = Field(description="Estimated investment range for gap remediation")
+    priority_1_gaps: int = Field(description="Number of Priority 1 (immediate action) gaps")
+    priority_2_gaps: int = Field(description="Number of Priority 2 (strategic implementation) gaps")
+    priority_3_gaps: int = Field(description="Number of Priority 3 (planned improvements) gaps")
+    estimated_timeline_months: str = Field(description="Estimated timeline for ISO27001 certification readiness")
+    total_potential_fines: float = Field(description="Total potential financial exposure from compliance gaps")
+    generation_metadata: Dict[str, Any] = Field(
+        description="Metadata about the control risk prioritization generation process"
+    )
+
 # Recommendation Models
 class GeneratedRecommendation(BaseModel):
     """Generated recommendation structure"""

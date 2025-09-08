@@ -6,7 +6,6 @@ from slowapi.util import get_remote_address
 from auth.decorators import ValidatedUser, authorize
 from dependencies import AuditLogServiceDep, TargetAudienceSummaryServiceDep
 from entities.audit_log import AuditLogCreate
-from services.target_audience_summary import get_audience_context
 from services.schemas import ExecutiveSummaryRequest, TargetAudienceSummaryResponse
 from config.config import settings
 
@@ -81,8 +80,10 @@ async def create_target_audience_summary(
         for gap in request_data.compliance_gaps
     )
 
-    # Get audience-specific focus areas
-    audience_context = get_audience_context(request_data.audit_report.target_audience)
+    # Get audience-specific focus areas via service
+    audience_context = target_audience_summary_service.get_audience_context(
+        request_data.audit_report.target_audience
+    )
     audience_focus_areas = audience_context.get('focus', '').split(', ')
 
     generation_metadata = {
