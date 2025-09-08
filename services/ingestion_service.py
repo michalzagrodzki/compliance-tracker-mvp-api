@@ -22,10 +22,14 @@ from common.exceptions import (
     ResourceNotFoundException,
 )
 from common.logging import get_logger, log_performance
-from services.vector_store import vector_store
+from typing import Protocol
 
 logger = get_logger("ingestion_service")
 
+
+class VectorStoreAdapter(Protocol):
+    def add_documents(self, documents: List[Any], **kwargs) -> List[str]:
+        ...
 
 def _calc_file_hash(file_path: str) -> str:
     sha = hashlib.sha256()
@@ -36,9 +40,15 @@ def _calc_file_hash(file_path: str) -> str:
 
 
 class IngestionService:
-    def __init__(self, ingestion_repo: PdfIngestionRepository, user_repo: UserRepository):
+    def __init__(
+        self,
+        ingestion_repo: PdfIngestionRepository,
+        user_repo: UserRepository,
+        vector_store: VectorStoreAdapter,
+    ):
         self.ingestion_repo = ingestion_repo
         self.user_repo = user_repo
+        self.vector_store = vector_store
 
     async def create_initial_record(
         self,
@@ -147,7 +157,7 @@ class IngestionService:
             splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
             chunks = splitter.split_documents(pages)
 
-            vector_store.add_documents(chunks)
+            self.vector_store.add_documents(chunks)
 
             # Update ingestion with completion
             update = PdfIngestionUpdate(
@@ -261,5 +271,9 @@ class IngestionService:
         items = await self.list(skip=skip, limit=limit, filters=filters)
         return [i.to_dict() for i in items]
 
-def create_ingestion_service(repo: PdfIngestionRepository, user_repo: UserRepository) -> IngestionService:
-    return IngestionService(repo, user_repo)
+def create_ingestion_service(
+    repo: PdfIngestionRepository,
+    user_repo: UserRepository,
+    vector_store: VectorStoreAdapter,
+) -> IngestionService:
+    return IngestionService(repo, user_repo, vector_store)

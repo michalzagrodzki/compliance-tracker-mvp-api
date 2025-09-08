@@ -20,6 +20,7 @@ from services.auth_service import AuthService, create_auth_service
 from services.compliance_gap_service import ComplianceGapService, create_compliance_gap_service
 from services.document_service import DocumentService, create_document_service
 from services.ingestion_service import IngestionService, create_ingestion_service
+from services.vector_store import vector_store as supabase_vector_store
 from services.chat_history_service import ChatHistoryService, create_chat_history_service
 from services.ai_service import AIService, create_ai_service
 from services.compliance_recommendation_service import ComplianceRecommendationService, create_compliance_recommendation_service
@@ -206,7 +207,8 @@ def get_ingestion_service() -> IngestionService:
     """Get singleton IngestionService with dependencies."""
     repo = get_pdf_ingestion_repository()
     user_repo = get_user_repository()
-    return create_ingestion_service(repo, user_repo)
+    # Inject vector store dependency
+    return create_ingestion_service(repo, user_repo, supabase_vector_store)
 
 
 @lru_cache()
