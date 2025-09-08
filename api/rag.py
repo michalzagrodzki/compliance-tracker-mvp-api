@@ -229,6 +229,7 @@ async def query_stream(
     rag_service: RAGServiceDep,
     history_service: ChatHistoryServiceDep,
     audit_session_service: AuditSessionServiceDep,
+    auth_service: AuthServiceDep,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False)
 ):
     """
@@ -236,7 +237,7 @@ async def query_stream(
     idempotency protection, and audit trail compliance.
     """
     try:
-        current_user = authenticate_and_authorize(
+        current_user = auth_service.authenticate_and_authorize(
             request=request,
             allowed_roles=["admin", "compliance_officer"],
             domains=["ISO27001"],
