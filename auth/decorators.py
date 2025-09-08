@@ -3,11 +3,19 @@ import inspect
 import logging
 from typing import Optional, List
 from fastapi import Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from auth.models import AuthenticatedUser, ValidatedUser
-from services.authentication import get_current_active_user
-from services.user_management import get_user_by_id
+from dependencies import AuthServiceDep
 
 logger = logging.getLogger(__name__)
+security = HTTPBearer()
+
+async def get_current_active_user(
+    auth_service: AuthServiceDep,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> AuthenticatedUser:
+    user = await auth_service.get_current_user(credentials.credentials)
+    return AuthenticatedUser(user.id, user.email, user.model_dump())
 
 def authorize(
     domains: Optional[List[str]] = None,
@@ -29,7 +37,8 @@ def authorize(
             current_user: AuthenticatedUser = Depends(get_current_active_user)
         ) -> ValidatedUser:
             try:
-                user_data = get_user_by_id(current_user.id)
+                # Use data from the authenticated user resolved via AuthService
+                user_data = current_user.user_data
 
                 if check_active and not user_data.get("is_active", False):
                     logger.warning(f"Inactive user blocked: {user_data.get('email')}")

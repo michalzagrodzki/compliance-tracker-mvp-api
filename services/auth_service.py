@@ -1,19 +1,21 @@
 """
 Refactored Authentication Service using Repository pattern.
+Extends with request-scoped authorization helper.
 """
 
-from typing import Optional
-from fastapi import HTTPException
+from typing import Optional, List
+from fastapi import HTTPException, Request
 
 from supabase import Client
-from auth.models import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup
+from auth.models import RefreshTokenRequest, TokenResponse, UserLogin, UserSignup, ValidatedUser
 from entities.user import User, UserCreate
 from repositories.user_repository import UserRepository
 from common.exceptions import (
     AuthenticationException,
     ValidationException,
     ResourceNotFoundException,
-    BusinessLogicException
+    BusinessLogicException,
+    AuthorizationException,
 )
 from common.logging import get_logger
 from config.config import settings
@@ -201,6 +203,93 @@ class AuthService:
             logger.error(f"Logout failed: {e}", exc_info=True)
             # Don't fail logout completely if there's an error
             return {"message": "Logout completed", "note": "Session may already be invalid"}
+
+    @staticmethod
+    def _extract_access_token(request: Request) -> Optional[str]:
+        auth = request.headers.get("authorization") or request.headers.get("Authorization")
+        if auth and auth.lower().startswith("bearer "):
+            return auth.split(" ", 1)[1].strip()
+        for name in ("access_token", "Authorization", "auth_token", "token"):
+            if name in request.cookies:
+                return request.cookies[name]
+        return None
+
+    async def authenticate_and_authorize(
+        self,
+        request: Request,
+        allowed_roles: Optional[List[str]] = None,
+        domains: Optional[List[str]] = None,
+        check_active: bool = True,
+    ) -> ValidatedUser:
+        """
+        Extract token, resolve current user via Supabase + repository,
+        apply role/domain/active checks, and return a ValidatedUser.
+        """
+        token = self._extract_access_token(request)
+        if not token:
+            raise AuthenticationException(
+                detail="Missing or invalid Authorization token",
+                error_code="MISSING_TOKEN",
+            )
+
+        # Reuse the service's current-user resolution
+        user = await self.get_current_user(token)
+
+        if check_active and not getattr(user, "is_active", True):
+            raise AuthenticationException(
+                detail="Your account has been deactivated. Please contact support.",
+                error_code="ACCOUNT_DEACTIVATED",
+            )
+
+        if allowed_roles and getattr(user, "role", None) not in allowed_roles:
+            raise AuthorizationException(detail="Access denied.")
+
+        if domains:
+            user_domains = getattr(user, "compliance_domains", []) or []
+            if not any(d in user_domains for d in domains):
+                raise AuthorizationException(detail="Access denied")
+
+        # Build ValidatedUser compatible with existing code
+        return ValidatedUser(id=user.id, email=user.email, user_data=user.model_dump())
+
+    async def get_current_user(self, access_token: str) -> User:
+        """Resolve the current user from an access token and ensure it is active.
+
+        Returns the domain User entity. Raises AuthenticationException or
+        ResourceNotFoundException on failures.
+        """
+        try:
+            user_response = self.supabase.auth.get_user(access_token)
+
+            if user_response.user is None:
+                raise AuthenticationException(
+                    detail="Invalid or expired token",
+                    error_code="INVALID_TOKEN"
+                )
+
+            user = await self.user_repository.get_by_id(user_response.user.id)
+            if not user:
+                raise ResourceNotFoundException(
+                    resource_type="User",
+                    resource_id=user_response.user.id
+                )
+
+            if not user.is_active:
+                raise AuthenticationException(
+                    detail="User account is deactivated",
+                    error_code="ACCOUNT_DEACTIVATED"
+                )
+
+            return user
+
+        except (AuthenticationException, ResourceNotFoundException):
+            raise
+        except Exception as e:
+            logger.error(f"Get current user failed: {e}", exc_info=True)
+            raise AuthenticationException(
+                detail="Failed to get current user",
+                error_code="GET_CURRENT_USER_FAILED"
+            )
 
 # Create service instance (to be used with dependency injection)
 def create_auth_service(supabase_client: Client, user_repository: UserRepository) -> AuthService:

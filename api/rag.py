@@ -8,12 +8,9 @@ from fastapi.responses import StreamingResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from auth.decorators import ValidatedUser, authorize
 from security.input_validator import safe_stream, validate_and_secure_query_request
 from security.endpoint_validator import ensure_json_request, normalize_user_agent, compute_fingerprint, require_idempotency, stable_fingerprint, store_idempotency
-from services.authentication import authenticate_and_authorize
-from dependencies import ChatHistoryServiceDep
-from dependencies import AuditSessionServiceDep
+from dependencies import AuthServiceDep, ChatHistoryServiceDep, AuditSessionServiceDep
 from entities.chat_history import ChatHistoryFilter
 from services.schemas import QueryRequest, QueryResponse
 from dependencies import RAGServiceDep
@@ -39,6 +36,7 @@ async def query_qa(
     response: Response,
     rag_service: RAGServiceDep,
     audit_session_service: AuditSessionServiceDep,
+    auth_service: AuthServiceDep,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", convert_underscores=False)
 ) -> QueryResponse:
     """
@@ -47,7 +45,7 @@ async def query_qa(
     """
     try:
         # Authentication and authorization
-        current_user = authenticate_and_authorize(
+        current_user = await auth_service.authenticate_and_authorize(
             request=request,
             allowed_roles=["admin", "compliance_officer"],
             domains=["ISO27001"],

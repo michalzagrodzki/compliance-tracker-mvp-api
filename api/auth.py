@@ -1,9 +1,8 @@
 from fastapi import APIRouter, Request, Depends
-from fastapi.security import HTTPAuthorizationCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from auth.decorators import ValidatedUser, authorize
 from auth.models import UserSignup, UserLogin, RefreshTokenRequest
-from services.authentication import get_current_user
 from dependencies import AuthServiceDep
 
 # Enhanced error handling imports
@@ -19,6 +18,9 @@ from common.responses import create_success_response
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 logger = get_logger("auth")
+
+# HTTP bearer security dependency for token extraction
+security = HTTPBearer()
 
 
 @router.post("/signup",
@@ -208,15 +210,19 @@ async def refresh_token(refresh_data: RefreshTokenRequest, request: Request, aut
 async def logout(
     request: Request,
     auth_service: AuthServiceDep,
-    credentials: HTTPAuthorizationCredentials = Depends(get_current_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """Enhanced logout with proper token invalidation."""
     
     try:
-        # Extract user info from token if possible
+        # Resolve user via AuthService for logging context
         user_id = None
-        if hasattr(credentials, 'user_id'):
-            user_id = credentials.user_id
+        try:
+            user = await auth_service.get_current_user(credentials.credentials)
+            user_id = getattr(user, "id", None)
+        except Exception:
+            # Continue with logout even if user resolution fails
+            pass
         
         # Call service
         result = await auth_service.logout(credentials.credentials)
