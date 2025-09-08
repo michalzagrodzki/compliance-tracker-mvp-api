@@ -1,11 +1,16 @@
-import logging
+"""
+Target Audience Summary service as a DI-friendly class.
+"""
+
 from typing import Dict, List, Any, Union
 from fastapi import HTTPException
 from openai import OpenAI
+
+from common.logging import get_logger
 from config.config import settings
 from services.schemas import ComplianceGap
 
-logger = logging.getLogger(__name__)
+logger = get_logger("target_audience_summary_service")
 
 def get_audience_context(target_audience: str) -> Dict[str, str]:
     """Get audience-specific context for content generation."""
@@ -53,64 +58,72 @@ def get_audience_context(target_audience: str) -> Dict[str, str]:
     }
     return audience_contexts.get(target_audience, audience_contexts["compliance_team"])
 
-def generate_target_audience_summary(
-    audit_report: Dict[str, Any],
-    compliance_gaps: List[ComplianceGap],
-) -> str:
+class TargetAudienceSummaryService:
+    """Service to generate audience-specific summaries via OpenAI."""
 
-    target_audience = audit_report.get('target_audience', 'compliance_team')
-    audience_context = get_audience_context(target_audience)
-    
-    # Build context from audit report
-    audit_context = _build_audit_context(audit_report)
-    
-    # Build audience-specific compliance gaps analysis
-    gaps_analysis = _build_audience_specific_gaps_analysis(compliance_gaps, audience_context)
-    
-    # Build audience-specific recommendations
-    recommendations_analysis = _build_audience_specific_recommendations(compliance_gaps, audience_context)
-    
-    # Build audience-specific action items
-    action_items = _build_audience_specific_action_items(audit_report, compliance_gaps, audience_context)
-    
-    # Create the audience-specific prompt
-    system_message, user_prompt = _create_target_audience_prompt(
-        audit_context,
-        gaps_analysis,
-        recommendations_analysis,
-        action_items,
-        target_audience,
-        audience_context
-    )
-    
-    client = OpenAI(api_key=settings.openai_api_key)
-    
-    try:
-        completion = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_message
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ],
-            temperature=0.1,
-            max_tokens=2500,
+    def __init__(self, api_key: str | None = None, model: str | None = None):
+        self.api_key = api_key or settings.openai_api_key
+        self.model = model or settings.openai_model
+
+    def generate_target_audience_summary(
+        self,
+        audit_report: Dict[str, Any],
+        compliance_gaps: List[ComplianceGap],
+    ) -> str:
+        target_audience = audit_report.get('target_audience', 'compliance_team')
+        audience_context = get_audience_context(target_audience)
+
+        # Build context from audit report
+        audit_context = _build_audit_context(audit_report)
+
+        # Build audience-specific sections
+        gaps_analysis = _build_audience_specific_gaps_analysis(compliance_gaps, audience_context)
+        recommendations_analysis = _build_audience_specific_recommendations(compliance_gaps, audience_context)
+        action_items = _build_audience_specific_action_items(audit_report, compliance_gaps, audience_context)
+
+        # Create the prompt
+        system_message, user_prompt = _create_target_audience_prompt(
+            audit_context,
+            gaps_analysis,
+            recommendations_analysis,
+            action_items,
+            target_audience,
+            audience_context,
         )
-    except Exception as e:
-        logger.error("OpenAI ChatCompletion failed for target audience summary", exc_info=True)
-        raise HTTPException(status_code=502, detail=f"OpenAI API error: {e}")
-    
-    summary = completion.choices[0].message.content.strip()
-    
-    logger.info(f"Successfully generated target audience summary for '{target_audience}' on audit report "
-               f"'{audit_report.get('report_title', 'Unknown')}' with {len(compliance_gaps)} gaps")
-    
-    return summary
+
+        client = OpenAI(api_key=self.api_key)
+
+        try:
+            completion = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,
+                max_tokens=2500,
+            )
+        except Exception as e:
+            logger.error("OpenAI ChatCompletion failed for target audience summary", exc_info=True)
+            raise HTTPException(status_code=502, detail=f"OpenAI API error: {e}")
+
+        summary = completion.choices[0].message.content.strip()
+
+        logger.info(
+            "Generated target audience summary",
+            extra={
+                "target_audience": target_audience,
+                "report_title": audit_report.get('report_title', 'Unknown'),
+                "gaps_count": len(compliance_gaps),
+            },
+        )
+
+        return summary
+
+
+# Factory for DI
+def create_target_audience_summary_service() -> TargetAudienceSummaryService:
+    return TargetAudienceSummaryService()
 
 def _get_gap_value(gap: Union[Dict[str, Any], ComplianceGap], key: str, default: Any = None) -> Any:
     """Helper function to get value from gap object regardless of type."""

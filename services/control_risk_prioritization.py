@@ -1,13 +1,18 @@
-import logging
+"""
+Control Risk Prioritization service as a DI-friendly class.
+"""
+
 from typing import Dict, List, Any, Union
 from fastapi import HTTPException
 from openai import OpenAI
 from pydantic import BaseModel, Field
 from uuid import UUID
+
+from common.logging import get_logger
 from config.config import settings
 from services.schemas import ComplianceGap
 
-logger = logging.getLogger(__name__)
+logger = get_logger("control_risk_prioritization_service")
 
 # Response model for control risk prioritization
 class ControlRiskPrioritizationResponse(BaseModel):
@@ -32,188 +37,169 @@ class ControlRiskPrioritizationResponse(BaseModel):
         description="Metadata about the control risk prioritization generation process"
     )
 
-def generate_control_risk_prioritization(
-    audit_report: Dict[str, Any],
-    compliance_gaps: List[ComplianceGap],
-) -> str:
-    """
-    Generate a control risk prioritization analysis using OpenAI API based on audit report and compliance gaps.
-    
-    Args:
-        audit_report: Full audit report object with all metadata
-        compliance_gaps: List of compliance gap objects
-    
-    Returns:
-        Formatted markdown control risk prioritization analysis
-    """
-    
-    # Build context from audit report
-    audit_context = _build_audit_context(audit_report)
-    
-    # Build control gaps analysis
-    control_gaps_analysis = _build_control_gaps_analysis(compliance_gaps)
-    
-    # Build control family analysis
-    control_family_analysis = _build_control_family_analysis(compliance_gaps)
-    
-    # Build business impact assessment
-    business_impact_analysis = _build_business_impact_analysis(compliance_gaps)
-    
-    # Build investment priority analysis
-    investment_priorities = _build_investment_priorities_analysis(compliance_gaps)
-    
-    # Create the control risk prioritization prompt
-    system_message, user_prompt = _create_control_risk_prioritization_prompt(
-        audit_context,
-        control_gaps_analysis,
-        control_family_analysis,
-        business_impact_analysis,
-        investment_priorities
-    )
-    
-    client = OpenAI(api_key=settings.openai_api_key)
-    
-    try:
-        completion = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_message
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ],
-            temperature=0.1,
-            max_tokens=2500,
-        )
-    except Exception as e:
-        logger.error("OpenAI ChatCompletion failed for control risk prioritization", exc_info=True)
-        raise HTTPException(status_code=502, detail=f"OpenAI API error: {e}")
-    
-    analysis = completion.choices[0].message.content.strip()
-    
-    logger.info(f"Successfully generated control risk prioritization for audit report "
-               f"'{audit_report.get('report_title', 'Unknown')}' with {len(compliance_gaps)} gaps")
-    
-    return analysis
+class ControlRiskPrioritizationService:
+    """Service to generate control risk prioritization analysis via OpenAI."""
 
-def calculate_risk_prioritization_metrics(
-    audit_report: Dict[str, Any],
-    compliance_gaps: List[ComplianceGap],
-) -> Dict[str, Any]:
-    """
-    Calculate all metrics needed for the ControlRiskPrioritizationResponse.
-    
-    Args:
-        audit_report: Full audit report object with all metadata
-        compliance_gaps: List of compliance gap objects
-    
-    Returns:
-        Dictionary containing all calculated metrics
-    """
-    
-    # Basic gap statistics
-    total_gaps = len(compliance_gaps)
-    high_risk_gaps = len([gap for gap in compliance_gaps if gap.risk_level == 'high'])
-    medium_risk_gaps = len([gap for gap in compliance_gaps if gap.risk_level == 'medium'])
-    low_risk_gaps = len([gap for gap in compliance_gaps if gap.risk_level == 'low'])
-    regulatory_gaps = len([gap for gap in compliance_gaps if gap.regulatory_requirement])
-    
-    # Calculate control family coverage
-    control_families_affected = set()
-    for gap in compliance_gaps:
-        category = gap.gap_category.lower() if gap.gap_category else 'other'
-        if 'access' in category or 'authentication' in category:
-            control_families_affected.add('A.9 - Access Control')
-        elif 'encryption' in category or 'crypto' in category:
-            control_families_affected.add('A.10 - Cryptography')
-        elif 'network' in category or 'communication' in category:
-            control_families_affected.add('A.13 - Communications Security')
-        elif 'incident' in category:
-            control_families_affected.add('A.16 - Information Security Incident Management')
-        elif 'backup' in category or 'continuity' in category:
-            control_families_affected.add('A.17 - Business Continuity Management')
-        elif 'compliance' in category:
-            control_families_affected.add('A.18 - Compliance')
-        elif 'asset' in category:
-            control_families_affected.add('A.8 - Asset Management')
-        elif 'physical' in category:
-            control_families_affected.add('A.11 - Physical and Environmental Security')
-        elif 'operations' in category:
-            control_families_affected.add('A.12 - Operations Security')
-        elif 'policy' in category or 'governance' in category:
-            control_families_affected.add('A.5 - Information Security Policies')
-        elif 'hr' in category or 'human' in category:
-            control_families_affected.add('A.7 - Human Resource Security')
+    def __init__(self, api_key: str | None = None, model: str | None = None):
+        self.api_key = api_key or settings.openai_api_key
+        self.model = model or settings.openai_model
+
+    def generate_control_risk_prioritization(
+        self,
+        audit_report: Dict[str, Any],
+        compliance_gaps: List[ComplianceGap],
+    ) -> str:
+        """Generate a control risk prioritization analysis using OpenAI."""
+        # Build sections
+        audit_context = _build_audit_context(audit_report)
+        control_gaps_analysis = _build_control_gaps_analysis(compliance_gaps)
+        control_family_analysis = _build_control_family_analysis(compliance_gaps)
+        business_impact_analysis = _build_business_impact_analysis(compliance_gaps)
+        investment_priorities = _build_investment_priorities_analysis(compliance_gaps)
+
+        # Prompt
+        system_message, user_prompt = _create_control_risk_prioritization_prompt(
+            audit_context,
+            control_gaps_analysis,
+            control_family_analysis,
+            business_impact_analysis,
+            investment_priorities,
+        )
+
+        client = OpenAI(api_key=self.api_key)
+
+        try:
+            completion = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,
+                max_tokens=2500,
+            )
+        except Exception as e:
+            logger.error(
+                "OpenAI ChatCompletion failed for control risk prioritization", exc_info=True
+            )
+            raise HTTPException(status_code=502, detail=f"OpenAI API error: {e}")
+
+        analysis = completion.choices[0].message.content.strip()
+
+        logger.info(
+            "Generated control risk prioritization",
+            extra={
+                "report_title": audit_report.get("report_title", "Unknown"),
+                "gaps_count": len(compliance_gaps),
+            },
+        )
+
+        return analysis
+
+    def calculate_risk_prioritization_metrics(
+        self,
+        audit_report: Dict[str, Any],
+        compliance_gaps: List[ComplianceGap],
+    ) -> Dict[str, Any]:
+        """Calculate metrics needed for the response."""
+        total_gaps = len(compliance_gaps)
+        high_risk_gaps = len([gap for gap in compliance_gaps if gap.risk_level == 'high'])
+        medium_risk_gaps = len([gap for gap in compliance_gaps if gap.risk_level == 'medium'])
+        low_risk_gaps = len([gap for gap in compliance_gaps if gap.risk_level == 'low'])
+        regulatory_gaps = len([gap for gap in compliance_gaps if gap.regulatory_requirement])
+
+        control_families_affected = set()
+        for gap in compliance_gaps:
+            category = gap.gap_category.lower() if gap.gap_category else 'other'
+            if 'access' in category or 'authentication' in category:
+                control_families_affected.add('A.9 - Access Control')
+            elif 'encryption' in category or 'crypto' in category:
+                control_families_affected.add('A.10 - Cryptography')
+            elif 'network' in category or 'communication' in category:
+                control_families_affected.add('A.13 - Communications Security')
+            elif 'incident' in category:
+                control_families_affected.add('A.16 - Information Security Incident Management')
+            elif 'backup' in category or 'continuity' in category:
+                control_families_affected.add('A.17 - Business Continuity Management')
+            elif 'compliance' in category:
+                control_families_affected.add('A.18 - Compliance')
+            elif 'asset' in category:
+                control_families_affected.add('A.8 - Asset Management')
+            elif 'physical' in category:
+                control_families_affected.add('A.11 - Physical and Environmental Security')
+            elif 'operations' in category:
+                control_families_affected.add('A.12 - Operations Security')
+            elif 'policy' in category or 'governance' in category:
+                control_families_affected.add('A.5 - Information Security Policies')
+            elif 'hr' in category or 'human' in category:
+                control_families_affected.add('A.7 - Human Resource Security')
+            else:
+                control_families_affected.add('A.6 - Organization of Information Security')
+
+        if high_risk_gaps == 0:
+            certification_readiness = "High"
+            timeline = "3-6 months"
+        elif high_risk_gaps <= 2:
+            certification_readiness = "Medium-High"
+            timeline = "6-9 months"
+        elif high_risk_gaps <= 5:
+            certification_readiness = "Medium"
+            timeline = "9-12 months"
         else:
-            control_families_affected.add('A.6 - Organization of Information Security')
-    
-    # Determine certification readiness and timeline
-    if high_risk_gaps == 0:
-        certification_readiness = "High"
-        timeline = "3-6 months"
-    elif high_risk_gaps <= 2:
-        certification_readiness = "Medium-High"
-        timeline = "6-9 months"
-    elif high_risk_gaps <= 5:
-        certification_readiness = "Medium"
-        timeline = "9-12 months"
-    else:
-        certification_readiness = "Low"
-        timeline = "12-18 months"
-    
-    # Determine investment range
-    if total_gaps <= 5:
-        investment_range = "$50K-$150K"
-    elif total_gaps <= 10:
-        investment_range = "$150K-$300K"
-    else:
-        investment_range = "$300K-$500K"
-    
-    # Calculate priority distribution
-    priority_1_gaps = len([
-        gap for gap in compliance_gaps 
-        if gap.risk_level == 'high' and gap.business_impact == 'high'
-    ])
-    
-    high_risk_medium_impact = len([
-        gap for gap in compliance_gaps 
-        if gap.risk_level == 'high' and gap.business_impact == 'medium'
-    ])
-    
-    medium_risk_high_impact = len([
-        gap for gap in compliance_gaps 
-        if gap.risk_level == 'medium' and gap.business_impact == 'high'
-    ])
-    
-    priority_2_gaps = high_risk_medium_impact + medium_risk_high_impact
-    priority_3_gaps = total_gaps - priority_1_gaps - priority_2_gaps
-    
-    # Calculate total potential fines
-    total_potential_fines = 0.0
-    for gap in compliance_gaps:
-        if gap.potential_fine_amount:
-            fine_amount = float(gap.potential_fine_amount)
-            total_potential_fines += fine_amount
-    
-    return {
-        "total_gaps": total_gaps,
-        "high_risk_gaps": high_risk_gaps,
-        "medium_risk_gaps": medium_risk_gaps,
-        "low_risk_gaps": low_risk_gaps,
-        "regulatory_gaps": regulatory_gaps,
-        "affected_control_families": len(control_families_affected),
-        "certification_readiness_score": certification_readiness,
-        "estimated_investment_range": investment_range,
-        "priority_1_gaps": priority_1_gaps,
-        "priority_2_gaps": priority_2_gaps,
-        "priority_3_gaps": priority_3_gaps,
-        "estimated_timeline_months": timeline,
-        "total_potential_fines": total_potential_fines,
-    }
+            certification_readiness = "Low"
+            timeline = "12-18 months"
+
+        if total_gaps <= 5:
+            investment_range = "$50K-$150K"
+        elif total_gaps <= 10:
+            investment_range = "$150K-$300K"
+        else:
+            investment_range = "$300K-$500K"
+
+        priority_1_gaps = len([
+            gap for gap in compliance_gaps 
+            if gap.risk_level == 'high' and gap.business_impact == 'high'
+        ])
+
+        high_risk_medium_impact = len([
+            gap for gap in compliance_gaps 
+            if gap.risk_level == 'high' and gap.business_impact == 'medium'
+        ])
+
+        medium_risk_high_impact = len([
+            gap for gap in compliance_gaps 
+            if gap.risk_level == 'medium' and gap.business_impact == 'high'
+        ])
+
+        priority_2_gaps = high_risk_medium_impact + medium_risk_high_impact
+        priority_3_gaps = total_gaps - priority_1_gaps - priority_2_gaps
+
+        total_potential_fines = 0.0
+        for gap in compliance_gaps:
+            if gap.potential_fine_amount:
+                fine_amount = float(gap.potential_fine_amount)
+                total_potential_fines += fine_amount
+
+        return {
+            "total_gaps": total_gaps,
+            "high_risk_gaps": high_risk_gaps,
+            "medium_risk_gaps": medium_risk_gaps,
+            "low_risk_gaps": low_risk_gaps,
+            "regulatory_gaps": regulatory_gaps,
+            "affected_control_families": len(control_families_affected),
+            "certification_readiness_score": certification_readiness,
+            "estimated_investment_range": investment_range,
+            "priority_1_gaps": priority_1_gaps,
+            "priority_2_gaps": priority_2_gaps,
+            "priority_3_gaps": priority_3_gaps,
+            "estimated_timeline_months": timeline,
+            "total_potential_fines": total_potential_fines,
+        }
+
+
+# Factory for DI
+def create_control_risk_prioritization_service() -> ControlRiskPrioritizationService:
+    return ControlRiskPrioritizationService()
 
 def _get_gap_value(gap: Union[Dict[str, Any], ComplianceGap], key: str, default: Any = None) -> Any:
     """Helper function to get value from gap object regardless of type."""

@@ -4,9 +4,8 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from auth.decorators import ValidatedUser, authorize
-from dependencies import AuditLogServiceDep
+from dependencies import AuditLogServiceDep, ExecutiveSummaryServiceDep
 from entities.audit_log import AuditLogCreate
-from services.executive_summary import generate_executive_summary
 from services.schemas import ExecutiveSummaryRequest, ExecutiveSummaryResponse, RiskLevel
 from config.config import settings
 
@@ -25,6 +24,7 @@ async def create_executive_summary(
     request_data: ExecutiveSummaryRequest,
     request: Request,
     audit_log_service: AuditLogServiceDep = None,
+    executive_summary_service: ExecutiveSummaryServiceDep = None,
     current_user: ValidatedUser = None
 ) -> ExecutiveSummaryResponse:
     start_time = time.time()
@@ -48,7 +48,7 @@ async def create_executive_summary(
     compliance_gaps_list = [gap.model_dump() for gap in request_data.compliance_gaps]
 
     try:
-        executive_summary = generate_executive_summary(
+        executive_summary = executive_summary_service.generate_executive_summary(
             audit_report=audit_report_dict,
             compliance_gaps=compliance_gaps_list,
             summary_type=request_data.summary_type.value,

@@ -4,12 +4,10 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from auth.decorators import ValidatedUser, authorize
-from dependencies import AuditLogServiceDep
+from dependencies import AuditLogServiceDep, ControlRiskPrioritizationServiceDep
 from entities.audit_log import AuditLogCreate
 from services.control_risk_prioritization import (
-    generate_control_risk_prioritization,
-    calculate_risk_prioritization_metrics,
-    ControlRiskPrioritizationResponse
+    ControlRiskPrioritizationResponse,
 )
 from services.schemas import ThreatIntelligenceRequest
 from config.config import settings
@@ -29,6 +27,7 @@ async def create_control_risk_prioritization(
     request_data: ThreatIntelligenceRequest,
     request: Request,
     audit_log_service: AuditLogServiceDep = None,
+    risk_prioritization_service: ControlRiskPrioritizationServiceDep = None,
     current_user: ValidatedUser = None
 ) -> ControlRiskPrioritizationResponse:
     start_time = time.time()
@@ -53,7 +52,7 @@ async def create_control_risk_prioritization(
     compliance_gaps_list = [gap.model_dump() for gap in request_data.compliance_gaps]
 
     try:
-        risk_analysis = generate_control_risk_prioritization(
+        risk_analysis = risk_prioritization_service.generate_control_risk_prioritization(
             audit_report=audit_report_dict,
             compliance_gaps=compliance_gaps_list,
         )
@@ -69,7 +68,9 @@ async def create_control_risk_prioritization(
     response_time_ms = int((end_time - start_time) * 1000)
 
     # Calculate risk metrics
-    metrics = calculate_risk_prioritization_metrics(audit_report_dict, request_data.compliance_gaps)
+    metrics = risk_prioritization_service.calculate_risk_prioritization_metrics(
+        audit_report_dict, request_data.compliance_gaps
+    )
 
     generation_metadata = {
         "generation_time_ms": response_time_ms,

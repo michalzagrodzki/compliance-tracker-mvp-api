@@ -4,9 +4,9 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from auth.decorators import ValidatedUser, authorize
-from dependencies import AuditLogServiceDep
+from dependencies import AuditLogServiceDep, TargetAudienceSummaryServiceDep
 from entities.audit_log import AuditLogCreate
-from services.target_audience_summary import generate_target_audience_summary, get_audience_context
+from services.target_audience_summary import get_audience_context
 from services.schemas import ExecutiveSummaryRequest, TargetAudienceSummaryResponse
 from config.config import settings
 
@@ -25,6 +25,7 @@ async def create_target_audience_summary(
     request_data: ExecutiveSummaryRequest,
     request: Request,
     audit_log_service: AuditLogServiceDep = None,
+    target_audience_summary_service: TargetAudienceSummaryServiceDep = None,
     current_user: ValidatedUser = None
 ) -> TargetAudienceSummaryResponse:
     start_time = time.time()
@@ -48,7 +49,7 @@ async def create_target_audience_summary(
     compliance_gaps_list = request_data.compliance_gaps
 
     try:
-        target_audience_summary = generate_target_audience_summary(
+        target_audience_summary = target_audience_summary_service.generate_target_audience_summary(
             audit_report=audit_report_dict,
             compliance_gaps=compliance_gaps_list,
         )

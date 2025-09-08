@@ -4,9 +4,8 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from auth.decorators import ValidatedUser, authorize
-from dependencies import AuditLogServiceDep
+from dependencies import AuditLogServiceDep, ThreatIntelligenceServiceDep
 from entities.audit_log import AuditLogCreate
-from services.threat_intelligence import generate_threat_intelligence
 from services.schemas import ThreatIntelligenceRequest, ThreatIntelligenceResponse
 from config.config import settings
 
@@ -25,6 +24,7 @@ async def create_threat_intelligence_analysis(
     request_data: ThreatIntelligenceRequest,
     request: Request,
     audit_log_service: AuditLogServiceDep = None,
+    threat_intelligence_service: ThreatIntelligenceServiceDep = None,
     current_user: ValidatedUser = None
 ) -> ThreatIntelligenceResponse:
     start_time = time.time()
@@ -49,7 +49,7 @@ async def create_threat_intelligence_analysis(
     compliance_gaps_list = [gap.model_dump() for gap in request_data.compliance_gaps]
 
     try:
-        threat_analysis = generate_threat_intelligence(
+        threat_analysis = threat_intelligence_service.generate_threat_intelligence(
             audit_report=audit_report_dict,
             compliance_gaps=compliance_gaps_list,
         )

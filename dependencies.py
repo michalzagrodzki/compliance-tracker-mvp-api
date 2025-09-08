@@ -32,10 +32,26 @@ from services.audit_report_versions import (
     AuditReportVersionService,
     create_audit_report_version_service,
 )
+from services.executive_summary import (
+    ExecutiveSummaryService,
+    create_executive_summary_service,
+)
 from adapters.openai_adapter import OpenAIAdapter, MockAIAdapter
 from adapters.embedding_adapter import BaseEmbeddingAdapter, OpenAIEmbeddingAdapter
 from adapters.vector_search_adapter import BaseVectorSearchAdapter, SupabaseVectorSearchAdapter
 from services.rag_service import RAGService, create_rag_service
+from services.control_risk_prioritization import (
+    ControlRiskPrioritizationService,
+    create_control_risk_prioritization_service,
+)
+from services.target_audience_summary import (
+    TargetAudienceSummaryService,
+    create_target_audience_summary_service,
+)
+from services.threat_intelligence import (
+    ThreatIntelligenceService,
+    create_threat_intelligence_service,
+)
 from config.config import settings
 
 
@@ -173,6 +189,12 @@ def get_compliance_domain_service() -> ComplianceDomainService:
 
 
 @lru_cache()
+def get_executive_summary_service() -> ExecutiveSummaryService:
+    """Get singleton ExecutiveSummaryService."""
+    return create_executive_summary_service()
+
+
+@lru_cache()
 def get_pdf_ingestion_repository() -> PdfIngestionRepository:
     """Get singleton PdfIngestion repository."""
     supabase = get_supabase_client()
@@ -273,6 +295,24 @@ def get_rag_service() -> RAGService:
     )
 
 
+@lru_cache()
+def get_control_risk_prioritization_service() -> ControlRiskPrioritizationService:
+    """Get singleton ControlRiskPrioritizationService."""
+    return create_control_risk_prioritization_service()
+
+
+@lru_cache()
+def get_target_audience_summary_service() -> TargetAudienceSummaryService:
+    """Get singleton TargetAudienceSummaryService."""
+    return create_target_audience_summary_service()
+
+
+@lru_cache()
+def get_threat_intelligence_service() -> ThreatIntelligenceService:
+    """Get singleton ThreatIntelligenceService."""
+    return create_threat_intelligence_service()
+
+
 # Dependency annotations for FastAPI
 SupabaseClient = Annotated[object, Depends(get_supabase_client)]
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
@@ -300,3 +340,7 @@ ComplianceRecommendationServiceDep = Annotated[ComplianceRecommendationService, 
 EmbeddingAdapterDep = Annotated[BaseEmbeddingAdapter, Depends(get_embedding_adapter)]
 VectorSearchAdapterDep = Annotated[BaseVectorSearchAdapter, Depends(get_vector_search_adapter)]
 RAGServiceDep = Annotated[RAGService, Depends(get_rag_service)]
+ControlRiskPrioritizationServiceDep = Annotated[ControlRiskPrioritizationService, Depends(get_control_risk_prioritization_service)]
+TargetAudienceSummaryServiceDep = Annotated[TargetAudienceSummaryService, Depends(get_target_audience_summary_service)]
+ThreatIntelligenceServiceDep = Annotated[ThreatIntelligenceService, Depends(get_threat_intelligence_service)]
+ExecutiveSummaryServiceDep = Annotated[ExecutiveSummaryService, Depends(get_executive_summary_service)]

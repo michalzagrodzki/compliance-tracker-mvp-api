@@ -1,74 +1,80 @@
-import logging
+"""
+Executive Summary service using DI-friendly class structure.
+
+This wraps the previous module functions into a class method for use via FastAPI dependencies.
+"""
+
 from typing import Dict, List, Any, Union
 from fastapi import HTTPException
 from openai import OpenAI
+
+from common.logging import get_logger
 from config.config import settings
 from services.schemas import ComplianceGap
 
-logger = logging.getLogger(__name__)
+logger = get_logger("executive_summary_service")
 
-def generate_executive_summary(
-    audit_report: Dict[str, Any],
-    compliance_gaps: List[ComplianceGap],
-    summary_type: str = "standard",
-) -> str:
-    """
-    Generate an executive summary using OpenAI API based on audit report and compliance gaps.
-    
-    Args:
-        audit_report: Full audit report object with all metadata
-        compliance_gaps: List of compliance gap objects
-        summary_type: Type of summary to generate (standard, detailed, brief)
-    
-    Returns:
-        Formatted markdown executive summary
-    """
-    
-    # Build context from audit report
-    audit_context = _build_audit_context(audit_report)
-    
-    # Build compliance gaps analysis
-    gaps_analysis = _build_gaps_analysis(compliance_gaps)
-    
-    # Build summary statistics
-    summary_stats = _build_summary_statistics(audit_report, compliance_gaps)
-    
-    # Create the prompt based on summary type
-    system_message, user_prompt = _create_summary_prompt(
-        audit_context, 
-        gaps_analysis, 
-        summary_stats, 
-        summary_type,
-    )
-    
-    client = OpenAI(api_key=settings.openai_api_key)
-    
-    try:
-        completion = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_message
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ],
-            temperature=0.1,
-            max_tokens=2000,
+
+class ExecutiveSummaryService:
+    """Service for generating executive summaries via OpenAI."""
+
+    def __init__(self, api_key: str | None = None, model: str | None = None):
+        self.api_key = api_key or settings.openai_api_key
+        self.model = model or settings.openai_model
+
+    def generate_executive_summary(
+        self,
+        audit_report: Dict[str, Any],
+        compliance_gaps: List[ComplianceGap],
+        summary_type: str = "standard",
+    ) -> str:
+        """Generate an executive summary using OpenAI based on audit report and gaps."""
+        # Build sections
+        audit_context = _build_audit_context(audit_report)
+        gaps_analysis = _build_gaps_analysis(compliance_gaps)
+        summary_stats = _build_summary_statistics(audit_report, compliance_gaps)
+
+        # Compose prompt
+        system_message, user_prompt = _create_summary_prompt(
+            audit_context,
+            gaps_analysis,
+            summary_stats,
+            summary_type,
         )
-    except Exception as e:
-        logger.error("OpenAI ChatCompletion failed for executive summary", exc_info=True)
-        raise HTTPException(status_code=502, detail=f"OpenAI API error: {e}")
-    
-    summary = completion.choices[0].message.content.strip()
-    
-    logger.info(f"Successfully generated executive summary for audit report "
-               f"'{audit_report.get('report_title', 'Unknown')}' with {len(compliance_gaps)} gaps")
-    
-    return summary
+
+        client = OpenAI(api_key=self.api_key)
+
+        try:
+            completion = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,
+                max_tokens=2000,
+            )
+        except Exception as e:
+            logger.error("OpenAI ChatCompletion failed for executive summary", exc_info=True)
+            raise HTTPException(status_code=502, detail=f"OpenAI API error: {e}")
+
+        summary = completion.choices[0].message.content.strip()
+
+        logger.info(
+            "Generated executive summary",
+            extra={
+                "report_title": audit_report.get("report_title", "Unknown"),
+                "gaps_count": len(compliance_gaps),
+                "summary_type": summary_type,
+            },
+        )
+
+        return summary
+
+
+# Factory for DI
+def create_executive_summary_service() -> ExecutiveSummaryService:
+    return ExecutiveSummaryService()
 
 def _get_gap_value(gap: Union[Dict[str, Any], ComplianceGap], key: str, default: Any = None) -> Any:
     """Helper function to get value from gap object regardless of type."""

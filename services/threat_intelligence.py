@@ -1,65 +1,80 @@
-import logging
+"""
+Threat Intelligence service as a DI-friendly class.
+"""
+
 from typing import Dict, List, Any, Union
 from fastapi import HTTPException
 from openai import OpenAI
+
+from common.logging import get_logger
 from config.config import settings
 from services.schemas import ComplianceGap
 
-logger = logging.getLogger(__name__)
+logger = get_logger("threat_intelligence_service")
 
-def generate_threat_intelligence(
-    audit_report: Dict[str, Any],
-    compliance_gaps: List[ComplianceGap],
-) -> str:
-    
-    # Build context from audit report
-    audit_context = _build_audit_context(audit_report)
-    
-    # Build control gaps analysis from threat perspective
-    control_gaps_analysis = _build_control_gaps_analysis(compliance_gaps)
-    
-    # Build threat landscape assessment
-    threat_landscape = _build_threat_landscape_analysis(compliance_gaps)
-    
-    # Build attack vector analysis
-    attack_vectors = _build_attack_vector_analysis(compliance_gaps)
-    
-    # Create the threat intelligence prompt
-    system_message, user_prompt = _create_threat_intelligence_prompt(
-        audit_context,
-        control_gaps_analysis,
-        threat_landscape,
-        attack_vectors
-    )
-    
-    client = OpenAI(api_key=settings.openai_api_key)
-    
-    try:
-        completion = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_message
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ],
-            temperature=0.1,
-            max_tokens=2000,
+
+class ThreatIntelligenceService:
+    """Service to generate threat intelligence analysis via OpenAI."""
+
+    def __init__(self, api_key: str | None = None, model: str | None = None):
+        self.api_key = api_key or settings.openai_api_key
+        self.model = model or settings.openai_model
+
+    def generate_threat_intelligence(
+        self,
+        audit_report: Dict[str, Any],
+        compliance_gaps: List[ComplianceGap],
+    ) -> str:
+        # Build context from audit report
+        audit_context = _build_audit_context(audit_report)
+
+        # Build sections
+        control_gaps_analysis = _build_control_gaps_analysis(compliance_gaps)
+        threat_landscape = _build_threat_landscape_analysis(compliance_gaps)
+        attack_vectors = _build_attack_vector_analysis(compliance_gaps)
+
+        # Prompt
+        system_message, user_prompt = _create_threat_intelligence_prompt(
+            audit_context,
+            control_gaps_analysis,
+            threat_landscape,
+            attack_vectors,
         )
-    except Exception as e:
-        logger.error("OpenAI ChatCompletion failed for threat intelligence analysis", exc_info=True)
-        raise HTTPException(status_code=502, detail=f"OpenAI API error: {e}")
-    
-    analysis = completion.choices[0].message.content.strip()
-    
-    logger.info(f"Successfully generated threat intelligence analysis for audit report "
-               f"'{audit_report.get('report_title', 'Unknown')}' with {len(compliance_gaps)} gaps")
-    
-    return analysis
+
+        client = OpenAI(api_key=self.api_key)
+
+        try:
+            completion = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,
+                max_tokens=2000,
+            )
+        except Exception as e:
+            logger.error(
+                "OpenAI ChatCompletion failed for threat intelligence analysis", exc_info=True
+            )
+            raise HTTPException(status_code=502, detail=f"OpenAI API error: {e}")
+
+        analysis = completion.choices[0].message.content.strip()
+
+        logger.info(
+            "Generated threat intelligence analysis",
+            extra={
+                "report_title": audit_report.get("report_title", "Unknown"),
+                "gaps_count": len(compliance_gaps),
+            },
+        )
+
+        return analysis
+
+
+# Factory for DI
+def create_threat_intelligence_service() -> ThreatIntelligenceService:
+    return ThreatIntelligenceService()
 
 def _get_gap_value(gap: Union[Dict[str, Any], ComplianceGap], key: str, default: Any = None) -> Any:
     """Helper function to get value from gap object regardless of type."""
